@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets — never commit real credentials
+.env
+
+# Chroma vector DB (large binaries, regenerated at runtime)
+data/chroma/
+data/chroma_test/
+
+# OCR model cache
+data/ocr_models/
+
+# Scraped corpus output (can be large; keep source of truth elsewhere)
+data/corpus/collected_laws.jsonl
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
