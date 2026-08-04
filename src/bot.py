@@ -180,9 +180,21 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("🔎 در حال جستجوی مواد قانونی و تحلیل...")
 
-    coll = ensure_collection()
-    loop = asyncio.get_event_loop()
-    hits = await loop.run_in_executor(None, query_collection, coll, issue, 6)
+    try:
+        coll = ensure_collection()
+        loop = asyncio.get_event_loop()
+        hits = await loop.run_in_executor(None, query_collection, coll, issue, 6)
+    except Exception as e:
+        err = str(e)
+        if "insufficient_quota" in err or "RateLimitError" in err or "429" in err:
+            await update.message.reply_text(
+                "⚠️ حساب OpenAI شارژ نشده یا سقف استفاده (quota) تمام شده.\n\n"
+                "لطفاً در https://platform.openai.com روی Billing حداقل ۵ دلار شارژ کنید، "
+                "سپس دوباره /analyze را بزنید."
+            )
+        else:
+            await update.message.reply_text(f"⚠️ خطا در جستجوی قوانین: {err[:300]}")
+        return
 
     try:
         opinion = await loop.run_in_executor(
@@ -191,7 +203,15 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                      model=CFG.get("model", "gpt-4o-mini"))
         )
     except Exception as e:
-        await update.message.reply_text(f"⚠️ خطا در فراخوانی مدل: {e}")
+        err = str(e)
+        if "insufficient_quota" in err or "RateLimitError" in err or "429" in err:
+            await update.message.reply_text(
+                "⚠️ حساب OpenAI شارژ نشده یا سقف استفاده (quota) تمام شده.\n\n"
+                "لطفاً در https://platform.openai.com روی Billing حداقل ۵ دلار شارژ کنید، "
+                "سپس دوباره /analyze را بزنید."
+            )
+        else:
+            await update.message.reply_text(f"⚠️ خطا در فراخوانی مدل: {err[:300]}")
         return
 
     await update.message.reply_text(

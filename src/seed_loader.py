@@ -81,9 +81,14 @@ def make_chunk(rec: dict) -> str:
 def build_collection(chroma_client, collection_name: str = "iran_law",
                      records: Iterable[dict] | None = None,
                      openai_key: str | None = None,
-                     local_embeddings: bool = False):
+                     local_embeddings: bool = False,
+                     force_rebuild: bool = False):
     """
     (Re)create the collection and populate it from the corpus.
+    If a collection already exists AND is non-empty, it is reused by default
+    (force_rebuild=True to wipe and rebuild). This avoids re-embedding the
+    entire corpus on every bot restart (which wastes OpenAI quota).
+
     Returns the chromadb Collection object.
 
     Embedding strategy:
@@ -105,6 +110,15 @@ def build_collection(chroma_client, collection_name: str = "iran_law",
         )
     else:
         emb_fn = _HashFallbackEmbedding()
+
+    # Reuse an existing populated collection unless force_rebuild is requested.
+    try:
+        existing = chroma_client.get_collection(name=collection_name,
+                                                embedding_function=emb_fn)
+        if not force_rebuild and existing.count() > 0:
+            return existing
+    except Exception:
+        existing = None
 
     # wipe old collection for fresh rebuild
     try:
