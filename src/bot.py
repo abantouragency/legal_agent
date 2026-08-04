@@ -83,22 +83,44 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     handle = update.effective_user.username or "—"
     AP.ensure_user(uid, handle=handle, admin_ids=CFG.get("admin_ids"))
     await update.message.reply_text(
-        "👋 سلام. من دستیار حقوقی (مشاوره اولیه) هستم.\n\n"
+        "👋 سلام. من دستیار حقوقی هوشمند (مشاوره اولیه) هستم.\n\n"
         "⚠️ با استفاده از این ربات، موافقت می‌کنید پرسش و تحلیل شما (بدون افشای نام "
         "و شماره، مگر با اجازه خودتان) جهت بهبود کیفیت در کانال مدیر ثبت شود.\n\n"
+        "🧠 من به صورت هوشمند موضوع را بررسی می‌کنم؛ اگر اطلاعات کافی نباشد، "
+        "خودم سوالات تکمیلی می‌پرسم تا دقیق‌ترین تحلیل را بدهم.\n\n"
         "🎁 دوره آزمایشی: ۱ تحلیل رایگان. پس از آن برای ادامه /buy را بزنید.\n\n"
         "برای دریافت تحلیل:\n"
         "۱. نام و شماره تماس را (اختیاری) بفرستید یا «رد» بنویسید.\n"
-        "۲. موضوع حقوقی را بنویسید.\n"
-        "۳. مستندات (عکس/PDF) را بفرستید (اختیاری).\n"
-        "۴. /analyze را بزنید."
+        "۲. موضوع حقوقی خود را مستقیماً بنویسید.\n"
+        "۳. اگر سوال تکمیلی پرسیدم، پاسخ دهید تا تحلیل کامل را بگیرید.\n"
+        "۴. مستندات (عکس/PDF) را بفرستید (اختیاری)."
     )
     set_profile(uid, context, consented=True)
 
 
 async def profile_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Text handler. Two modes:
+       - If awaiting clarification answers (conv['awaiting']), fold the reply
+         into the issue and run the analysis.
+       - Else collect name/phone on first interaction, then hand to handle_text.
+    """
     text = update.message.text.strip()
     uid = update.effective_user.id
+
+    st = context.chat_data.setdefault("conv", {"issue": "", "doc": "",
+                                               "history": [], "awaiting": False})
+
+    # Mode A: user is answering the clarification questions -> analyze now
+    if st.get("awaiting"):
+        st["issue"] = (st["issue"] + "\n" + text).strip()
+        st["awaiting"] = False
+        coll = ensure_collection()
+        loop = asyncio.get_event_loop()
+        hits = await loop.run_in_executor(None, query_collection, coll, st["issue"], 6)
+        await _run_analysis(update, context, hits, st.get("history", []))
+        return
+
+    # Mode B: initial name/phone capture
     if text in ("رد", "نمی‌خوام", "skip", "رد شد"):
         set_profile(uid, context, name="—", phone="—")
         AP.ensure_user(uid, name="—", phone="—", handle=update.effective_user.username or "—",
@@ -120,11 +142,67 @@ async def profile_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    st = context.chat_data.setdefault("conv", {"issue": "", "doc": ""})
-    st["issue"] = (st["issue"] + "\n" + update.message.text).strip()
-    await update.message.reply_text(
-        "✅ موضوع دریافت شد. مستندی دارید؟ بفرستید، وگرنه /analyze را بزنید."
-    )
+    """User sent free text. Run the smart workflow: clarify -> (ask | analyze)."""
+    uid = update.effective_user.id
+    text = update.message.text.strip()
+
+    # preserve conversation history for "remembering" context
+    st = context.chat_data.setdefault("conv", {"issue": "", "doc": "",
+                                               "history": [], "awaiting": False})
+    hist = st.setdefault("history", [])
+    # append the user's previous issue + this message as history for LLM context
+    if st.get("issue"):
+        hist.append({"role": "user", "content": st["issue"]})
+    st["issue"] = (st["issue"] + "\n" + text).strip()
+
+    if not AP.has_access(uid, CFG.get("admin_ids")):
+        if not AP.consume_trial(uid):
+            await update.message.reply_text(_access_blocked_message())
+            return
+
+    await update.message.reply_text("🔎 در حال بررسی موضوع و جستجوی مواد قانونی...")
+
+    coll = ensure_collection()
+    loop = asyncio.get_event_loop()
+    try:
+        hits = await loop.run_in_executor(None, query_collection, coll, text, 6)
+    except Exception as e:
+        if "insufficient_quota" in str(e) or "RateLimitError" in str(e) or "429" in str(e):
+            await update.message.reply_text(
+                "⚠️ حساب OpenAI شارژ نشده یا سقف استفاده (quota) تمام شده.\nلطفاً در "
+                "https://platform.openai.com روی Billing شارژ کنید، سپس دوباره پیام دهید."
+            )
+            return
+        raise
+
+    try:
+        cl = await loop.run_in_executor(
+            None, lambda: clarify(text, hits, doc_text=st.get("doc") or None,
+                                  history=hist, openai_key=CFG.get("openai_key"),
+                                  model=CFG.get("model", "gpt-4o-mini"))
+        )
+    except Exception as e:
+        if "insufficient_quota" in str(e) or "RateLimitError" in str(e) or "429" in str(e):
+            await update.message.reply_text(
+                "⚠️ حساب OpenAI شارژ نشده یا سقف استفاده (quota) تمام شده.\nلطفاً شارژ کنید."
+            )
+            return
+        await update.message.reply_text(f"⚠️ خطا در پردازش: {str(e)[:200]}")
+        return
+
+    if cl.needs_info and cl.questions:
+        # ask targeted questions, keep the issue + history, await answers
+        st["awaiting"] = True
+        q_text = "\n".join(f"❓ {i}. {q}" for i, q in enumerate(cl.questions, 1))
+        await update.message.reply_text(
+            f"📋 موضوع شما دریافت شد (نوع پرونده احتمالی: {cl.case_type or 'نامشخص'}).\n"
+            f"برای تحلیل دقیق‌تر، لطفاً به این سوالات پاسخ دهید:\n\n{q_text}\n\n"
+            f"پس از پاسخ، تحلیل کامل را دریافت خواهید کرد."
+        )
+        return
+
+    # enough info -> analyze now
+    await _run_analysis(update, context, hits, hist)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -165,59 +243,54 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    st = context.chat_data.get("conv", {"issue": "", "doc": ""})
+    """Manually triggered analysis via /analyze (uses current conv state)."""
+    st = context.chat_data.get("conv", {"issue": "", "doc": "", "history": []})
     issue = st.get("issue", "").strip()
     if not issue:
-        await update.message.reply_text("اول موضوع خود را بنویسید، سپس /analyze را بزنید.")
+        await update.message.reply_text(
+            "اول موضوع خود را بنویسید، سپس /analyze را بزنید.\n"
+            "یا مستقیماً موضوع را بنویسید تا ایجنت خودش تحلیل کند."
+        )
         return
+    coll = ensure_collection()
+    loop = asyncio.get_event_loop()
+    hits = await loop.run_in_executor(None, query_collection, coll, issue, 6)
+    await _run_analysis(update, context, hits, st.get("history", []))
 
-    # access gate
-    if not AP.has_access(uid, CFG.get("admin_ids")):
-        if not AP.consume_trial(uid):
-            await update.message.reply_text(_access_blocked_message())
-            return
 
-    await update.message.reply_text("🔎 در حال جستجوی مواد قانونی و تحلیل...")
+async def _run_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                        hits: list[dict], history: list[dict]):
+    """Shared analysis routine: runs the LLM, renders deep output privately,
+    posts the full report to the channel, updates stats."""
+    uid = update.effective_user.id
+    st = context.chat_data.get("conv", {"issue": "", "doc": "", "history": []})
+    issue = st.get("issue", "").strip()
 
-    try:
-        coll = ensure_collection()
-        loop = asyncio.get_event_loop()
-        hits = await loop.run_in_executor(None, query_collection, coll, issue, 6)
-    except Exception as e:
-        err = str(e)
-        if "insufficient_quota" in err or "RateLimitError" in err or "429" in err:
-            await update.message.reply_text(
-                "⚠️ حساب OpenAI شارژ نشده یا سقف استفاده (quota) تمام شده.\n\n"
-                "لطفاً در https://platform.openai.com روی Billing حداقل ۵ دلار شارژ کنید، "
-                "سپس دوباره /analyze را بزنید."
-            )
-        else:
-            await update.message.reply_text(f"⚠️ خطا در جستجوی قوانین: {err[:300]}")
-        return
+    await update.message.reply_text("⚖️ در حال تدوین تحلیل حقوقی جامع...")
 
+    loop = asyncio.get_event_loop()
     try:
         opinion = await loop.run_in_executor(
             None, lambda: ask_lawyer(issue, hits, doc_text=st.get("doc") or None,
                                      openai_key=CFG.get("openai_key"),
-                                     model=CFG.get("model", "gpt-4o-mini"))
+                                     model=CFG.get("model", "gpt-4o-mini"),
+                                     history=history)
         )
     except Exception as e:
         err = str(e)
         if "insufficient_quota" in err or "RateLimitError" in err or "429" in err:
             await update.message.reply_text(
-                "⚠️ حساب OpenAI شارژ نشده یا سقف استفاده (quota) تمام شده.\n\n"
-                "لطفاً در https://platform.openai.com روی Billing حداقل ۵ دلار شارژ کنید، "
-                "سپس دوباره /analyze را بزنید."
+                "⚠️ حساب OpenAI شارژ نشده یا سقف استفاده (quota) تمام شده.\nلطفاً شارژ کنید."
             )
         else:
             await update.message.reply_text(f"⚠️ خطا در فراخوانی مدل: {err[:300]}")
         return
 
-    await update.message.reply_text(
-        opinion.raw if len(opinion.raw) <= 4000 else opinion.raw[:4000] + "\n...(ادامه در کانال)"
-    )
+    # private summary (truncated) + full report in channel
+    summary = opinion.raw if len(opinion.raw) <= 4000 else opinion.raw[:4000] + "\n...(ادامه در کانال)"
+    await update.message.reply_text(summary)
 
+    # channel report with user info
     prof = get_profile(uid, context)
     name = prof.get("name", "—")
     phone = prof.get("phone", "—")
@@ -234,7 +307,8 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "✅ تحلیل رایگان شما ارائه شد. برای تحلیل‌های بیشتر /buy را بزنید."
         )
-    context.chat_data["conv"] = {"issue": "", "doc": ""}
+    # reset conversation (but keep nothing; fresh start next time)
+    context.chat_data["conv"] = {"issue": "", "doc": "", "history": [], "awaiting": False}
 
 
 # --------------------------------------------------------------------------
