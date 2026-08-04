@@ -37,9 +37,9 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters,
+    Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler,
 )
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +48,7 @@ from doc_processor import process_document
 from lawyer_agent import ask_lawyer
 import admin_panel as AP
 import drafter as DR
+import doc_pdf as PDF
 
 COLLECTION = None
 CFG = {}
@@ -111,6 +112,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🌐 کانال موسسه: @Padid_Avaran_Edalat"
     )
     set_profile(uid, context, consented=True)
+
+    # persistent smart menu (inline keyboard)
+    await update.message.reply_text(
+        "📲 منوی سریع:",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+def main_menu_keyboard() -> InlineKeyboardMarkup:
+    """Smart inline keyboard shown to users."""
+    buttons = [
+        [InlineKeyboardButton("⚖️ تحلیل موضوع حقوقی", callback_data="act:analyze")],
+        [InlineKeyboardButton("📄 صدور سند حقوقی", callback_data="act:draft")],
+        [InlineKeyboardButton("🛒 خرید دسترسی", callback_data="act:buy")],
+        [InlineKeyboardButton("🌐 کانال موسسه", url="https://t.me/Padid_Avaran_Edalat")],
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline keyboard button presses."""
+    q = update.callback_query
+    await q.answer()
+    data = q.data or ""
+    if data == "act:analyze":
+        await q.message.reply_text("✍️ موضوع حقوقی خود را بنویسید؛ من خودم تحلیل می‌کنم.")
+    elif data == "act:draft":
+        if AP.has_access(update.effective_user.id, CFG.get("admin_ids")):
+            await q.message.reply_text("📑 نوع سند را بنویسید یا دستور بزنید:\n/draft دادخواست")
+        else:
+            await q.message.reply_text("🔒 صدور سند ویژه کاربران فعال است. اول /buy را بزنید.")
+    elif data == "act:buy":
+        await buy(update, context)
+
 
 
 async def profile_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -324,6 +359,8 @@ async def _run_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
     # reset conversation (but keep nothing; fresh start next time)
     context.chat_data["conv"] = {"issue": "", "doc": "", "history": [], "awaiting": False}
+    # show the smart menu again
+    await update.message.reply_text("📲 منوی سریع:", reply_markup=main_menu_keyboard())
 
 
 # --------------------------------------------------------------------------
@@ -443,6 +480,24 @@ async def draft_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await post_to_channel(report)
     AP.incr_analyses(uid)
 
+    # send the user a PDF copy (RTL Persian) + fall back to text if unavailable
+    pdf_path = os.path.join(tempfile.gettempdir(), f"draft_{uid}_{abs(hash(doc_type))}.pdf")
+    try:
+        if PDF.available():
+            PDF.build_pdf(draft, f"{doc_type} — {name}", pdf_path)
+            with open(pdf_path, "rb") as f:
+                await update.message.reply_document(
+                    document=f,
+                    filename=f"{doc_type}.pdf",
+                    caption="📄 نسخه PDF سند (با فرمت حقوقی).",
+                )
+            os.unlink(pdf_path)
+            return
+        else:
+            await update.message.reply_text("ℹ️ کتابخانه PDF در دسترس نیست؛ متن سند ارسال شد.")
+    except Exception as e:
+        await update.message.reply_text(f"ℹ️ تولید PDF ناموفق بود ({str(e)[:150]})؛ متن سند ارسال شد.")
+
     # send the draft to the user (split if long)
     for chunk in _split(draft, 4000):
         await update.message.reply_text(chunk)
@@ -484,11 +539,17 @@ def ensure_collection():
     If the persisted collection has fewer documents than the current corpus
     (e.g. new seed laws were added), it is force-rebuilt so the new articles
     become searchable without the user manually deleting data/chroma.
+
+    The chroma path honors DATA_DIR (set to /data on Render) so the vector DB
+    persists across restarts on the mounted disk.
     """
     global COLLECTION
     if COLLECTION is None:
         import chromadb
-        client = chromadb.PersistentClient(path=os.path.join(PROJECT_ROOT, "data", "chroma"))
+        data_dir = os.environ.get("DATA_DIR", os.path.join(PROJECT_ROOT, "data"))
+        chroma_path = os.path.join(data_dir, "chroma")
+        os.makedirs(chroma_path, exist_ok=True)
+        client = chromadb.PersistentClient(path=chroma_path)
         recs = load_records()
         force = False
         try:
@@ -517,6 +578,13 @@ def main():
     if not token:
         raise RuntimeError("BOT_TOKEN not set in .env")
 
+    # start a tiny health server so PaaS platforms (Render etc.) stay "healthy"
+    try:
+        import web_health
+        web_health.start_health_server()
+    except Exception as e:
+        print(f"health server failed to start: {e}")
+
     _app = Application.builder().token(token).build()
     _app.add_handler(CommandHandler("start", start))
     _app.add_handler(CommandHandler("buy", buy))
@@ -529,6 +597,7 @@ def main():
     _app.add_handler(CommandHandler("draft", draft_cmd))
     _app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     _app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, profile_input))
+    _app.add_handler(CallbackQueryHandler(menu_callback))
 
     print("🤖 Bot started. Press Ctrl+C to stop.")
     _app.run_polling()

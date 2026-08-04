@@ -1,0 +1,14 @@
+# Runtime dependencies for the legal agent (installed on Render via pip).
+# Keep in sync with pyproject.toml. The PDF stack (fpdf2/arabic-reshaper/bidi)
+# is optional at runtime: the bot falls back to plain text if it is absent.
+chromadb>=1.5.9
+numpy>=2.4.6
+openai>=2.53.0
+pypdf>=6.14.2
+python-dotenv>=1.2.2
+python-telegram-bot>=22.8
+requests>=2.34.2
+# PDF / Persian font stack (optional but recommended)
+fpdf2>=2.8.0
+arabic-reshaper>=3.0.0
+python-bidi>=0.6.2

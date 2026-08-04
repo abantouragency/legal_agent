@@ -1,0 +1,40 @@
+# Render deployment blueprint for the legal agent.
+# Connect this repo to Render (https://dashboard.render.com) and create a
+# "Blueprint" from it; the web service below will deploy automatically.
+#
+# Required environment variables (set in Render dashboard -> Environment):
+#   BOT_TOKEN            Telegram bot token from @BotFather
+#   OPENAI_API_KEY       OpenAI API key (charged account)
+#   CHANNEL_ID           -100xxxxxxxxx (the institute channel, bot must be admin)
+#   ADMIN_IDS            67391189,125472442  (comma-separated Telegram user ids)
+#   MODEL                gpt-4o-mini (optional)
+#
+# The chroma vector DB persists at /data/chroma (a Render disk), so embedded
+# articles survive restarts.
+services:
+  - type: web
+    name: legal-agent
+    runtime: python
+    plan: free
+    region: frankfurt  # closest EU region; adjust as needed
+    pythonVersion: "3.11"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python -m src.bot"
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: BOT_TOKEN
+        sync: false   # set these manually in the dashboard
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CHANNEL_ID
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: MODEL
+        value: gpt-4o-mini
+    disks:
+      - name: chroma-data
+        mountPath: /data
+        sizeGB: 1
