@@ -12,6 +12,9 @@ wheels/
 # Secrets — never commit real credentials
 .env
 
+# User store (PII: names/phones/access state) — generated at runtime
+data/store.json
+
 # Chroma vector DB (large binaries, regenerated at runtime)
 data/chroma/
 data/chroma_test/
