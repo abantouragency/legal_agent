@@ -1,0 +1,12 @@
+# List of Telegram user IDs that have purchased/been granted full access.
+# One numeric user_id per line. Lines starting with # are comments.
+# The bot reads this file on each message; you can edit it live (no restart
+# needed beyond the next message) — though restarting the bot reloads it too.
+#
+# To grant access after a user pays via @rezapilot:
+#   1. Ask the user for their Telegram numeric ID (they can get it from @userinfobot)
+#   2. Add that number on its own line below, save the file.
+#
+# Admin IDs (always have access + can see reports in channel):
+67391189
+125472442
