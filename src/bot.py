@@ -24,8 +24,15 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import tempfile
 from typing import Optional
+
+# Ensure the directory containing this file (src/) is importable regardless of
+# how the bot is launched (python -m src.bot, python src/bot.py, etc.).
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
 
 from telegram import Update
 from telegram.ext import (
