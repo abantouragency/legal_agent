@@ -9,6 +9,8 @@ Flow:
   /buy        -> request paid access (flags pending, tells user to pay @rezapilot)
   /analyze    -> if access: run pipeline, reply summary privately + post full
                  report to the channel. Trial users get 1 free analysis.
+  /draft      -> generate a ready-to-use legal document (دادخواست/لایحه/
+                 اظهارنامه/شکوائیه/قرارداد) from the current case.
   (locked)    -> "message @rezapilot to buy"
 
 Admin commands (ADMIN_IDS only):
@@ -17,6 +19,7 @@ Admin commands (ADMIN_IDS only):
   /revoke ID  -> downgrade a user to trial
   /stats      -> quick stats
   /broadcast  -> (text after) send a message to all paid users via channel/DM
+  /draft <نوع> -> generate a legal document (admin/paid only)
 
 Environment (.env): see .env.example
 """
@@ -44,6 +47,7 @@ from seed_loader import load_records, build_collection, query_collection
 from doc_processor import process_document
 from lawyer_agent import ask_lawyer
 import admin_panel as AP
+import drafter as DR
 
 COLLECTION = None
 CFG = {}
@@ -385,6 +389,66 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ اطلاعیه در کانال منتشر شد.")
 
 
+async def draft_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generate a ready-to-use legal document from the current case context.
+    Usage: /draft [نوع سند]   (e.g. /draft دادخواست)
+    Paid users / admins only (documents are a paid feature)."""
+    uid = update.effective_user.id
+    if not AP.has_access(uid, CFG.get("admin_ids")):
+        await update.message.reply_text(
+            "🔒 صدور اسناد حقوقی ویژه کاربران فعال (پرداخت‌شده) است.\n"
+            "برای فعال‌سازی /buy را بزنید و پس از تایید ادمین استفاده کنید."
+        )
+        return
+
+    st = context.chat_data.get("conv", {"issue": "", "doc": "", "history": []})
+    issue = st.get("issue", "").strip()
+    if not issue:
+        await update.message.reply_text(
+            "اول موضوع حقوقی خود را بنویسید (تا ایجنت تحلیل/اطلاعات کافی داشته باشد)، "
+            "سپس /draft را بزنید.\nمثال: /draft دادخواست"
+        )
+        return
+
+    doc_type = " ".join(context.args).strip() or DR.classify_doc_type(issue)
+    await update.message.reply_text(f"📝 در حال تنظیم سند «{doc_type}»...")
+
+    coll = ensure_collection()
+    loop = asyncio.get_event_loop()
+    try:
+        hits = await loop.run_in_executor(None, query_collection, coll, issue, 6)
+        draft = await loop.run_in_executor(
+            None, lambda: DR.draft_document(doc_type, issue, hits,
+                                            openai_key=CFG.get("openai_key"),
+                                            model=CFG.get("model", "gpt-4o-mini"),
+                                            history=st.get("history", []))
+        )
+    except Exception as e:
+        err = str(e)
+        if "insufficient_quota" in err or "RateLimitError" in err or "429" in err:
+            await update.message.reply_text("⚠️ حساب OpenAI شارژ نشده یا سقف استفاده تمام شده. شارژ کنید.")
+        else:
+            await update.message.reply_text(f"⚠️ خطا در تنظیم سند: {err[:300]}")
+        return
+
+    # post full draft to channel too (with attribution)
+    prof = get_profile(uid, context)
+    name = prof.get("name", "—")
+    handle = update.effective_user.username or "بدون یوزرنیم"
+    report = (
+        f"📄 سند حقوقی تولید شد\n━━━━━━━━━━━━━━━━\n"
+        f"👤 کاربر: {name} | @{handle} | ID: {uid}\n"
+        f"📑 نوع سند: {doc_type}\n━━━━━━━━━━━━━━━━\n{draft}"
+    )
+    await post_to_channel(report)
+    AP.incr_analyses(uid)
+
+    # send the draft to the user (split if long)
+    for chunk in _split(draft, 4000):
+        await update.message.reply_text(chunk)
+
+
+
 # --------------------------------------------------------------------------
 # channel
 # --------------------------------------------------------------------------
@@ -415,12 +479,27 @@ def _split(text: str, limit: int = 4000) -> list[str]:
 
 
 def ensure_collection():
+    """Build (or reuse) the chroma collection.
+
+    If the persisted collection has fewer documents than the current corpus
+    (e.g. new seed laws were added), it is force-rebuilt so the new articles
+    become searchable without the user manually deleting data/chroma.
+    """
     global COLLECTION
     if COLLECTION is None:
         import chromadb
         client = chromadb.PersistentClient(path=os.path.join(PROJECT_ROOT, "data", "chroma"))
         recs = load_records()
-        COLLECTION = build_collection(client, records=recs, openai_key=CFG.get("openai_key"))
+        force = False
+        try:
+            existing = client.get_collection(name="iran_law")
+            if existing.count() < len(recs):
+                force = True  # corpus grew -> rebuild to include new laws
+        except Exception:
+            pass
+        COLLECTION = build_collection(client, records=recs,
+                                        openai_key=CFG.get("openai_key"),
+                                        force_rebuild=force)
     return COLLECTION
 
 
@@ -447,6 +526,7 @@ def main():
     _app.add_handler(CommandHandler("approve", approve_cmd))
     _app.add_handler(CommandHandler("revoke", revoke_cmd))
     _app.add_handler(CommandHandler("broadcast", broadcast_cmd))
+    _app.add_handler(CommandHandler("draft", draft_cmd))
     _app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     _app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, profile_input))
 
