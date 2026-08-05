@@ -561,8 +561,26 @@ def ensure_collection():
     return COLLECTION
 
 
+def _acquire_single_instance_lock():
+    """Prevent two bot processes (e.g. two Render workers or a redeploy that
+    overlaps the old instance) from polling the same Telegram token at once,
+    which causes 409 Conflict. Uses a lock file; the OS releases it if the
+    process dies, so it cannot deadlock across restarts."""
+    import fcntl
+    lock_path = os.path.join(tempfile.gettempdir(), "legal_agent_bot.lock")
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd  # keep the fd open for the process lifetime
+    except OSError:
+        print("⛔ Another instance of the bot is already running (lock held). "
+              "Exiting to avoid Telegram 409 Conflict.")
+        sys.exit(0)
+
+
 def main():
     global _app, CFG
+    _acquire_single_instance_lock()  # fixes 409 Conflict: only one poller at a time
     from dotenv import load_dotenv
     load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
     CFG = {
