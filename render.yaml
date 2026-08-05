@@ -30,6 +30,8 @@ services:
     envVars:
       - key: PORT
         value: "8080"
+      - key: PUBLIC_URL
+        value: "https://legal-agent-4afg.onrender.com"
       - key: WEB_CONCURRENCY
         value: "1"
       - key: DATA_DIR

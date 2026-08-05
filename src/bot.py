@@ -601,9 +601,11 @@ def main():
     if not token:
         raise RuntimeError("BOT_TOKEN not set in .env")
 
-    # Clear any competing getUpdates session / stuck webhook so a fresh deploy
-    # does not conflict with a previously running instance. This is the
-    # documented telegram-python-bot recovery for 409 "Conflict" errors.
+    # On Render free tier, long-polling causes 409 Conflict when more than one
+    # instance/worker shares the token. We therefore run in WEBHOOK mode:
+    # Telegram POSTs updates to /webhook and the health server enqueues them.
+    # This fully removes the "two getUpdates" race. We still clear any stale
+    # webhook first so a broken prior state cannot block us.
     try:
         from telegram import Bot as _TG_Bot
         _tg = _TG_Bot(token)
@@ -611,13 +613,6 @@ def main():
         print("🧹 cleared any stale webhook / competing getUpdates session")
     except Exception as e:
         print(f"delete_webhook warning (non-fatal): {e}")
-
-    # start a tiny health server so PaaS platforms (Render etc.) stay "healthy"
-    try:
-        import web_health
-        web_health.start_health_server()
-    except Exception as e:
-        print(f"health server failed to start: {e}")
 
     _app = Application.builder().token(token).build()
     _app.add_handler(CommandHandler("start", start))
@@ -649,8 +644,32 @@ def main():
 
     _app.add_error_handler(_global_error)
 
-    print("🤖 Bot started. Press Ctrl+C to stop.")
-    _app.run_polling(drop_pending_updates=True)
+    # Start the HTTP server that both answers /healthz AND receives Telegram
+    # webhook POSTs (enqueuing them into the Application).
+    import web_health
+    web_health.set_application(_app)
+    web_health.start_health_server()
+
+    public_url = os.environ.get("PUBLIC_URL", "").rstrip("/")
+    if public_url:
+        try:
+            _tg.set_webhook(f"{public_url}/webhook")
+            print(f"🔗 webhook set to {public_url}/webhook")
+        except Exception as e:
+            print(f"set_webhook warning (non-fatal): {e}")
+    else:
+        print("⚠️ PUBLIC_URL not set; webhook not registered. Set PUBLIC_URL to "
+              "https://<your-app>.onrender.com so Telegram can reach /webhook.")
+
+    print("🤖 Bot started in WEBHOOK mode. Press Ctrl+C to stop.")
+    _app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", "8080")),
+        url_path="/webhook",
+        webhook_url=None,
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+    )
 
 
 if __name__ == "__main__":
