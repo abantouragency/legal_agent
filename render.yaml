@@ -8,6 +8,8 @@
 #   CHANNEL_ID           -100xxxxxxxxx (the institute channel, bot must be admin)
 #   ADMIN_IDS            67391189,125472442  (comma-separated Telegram user ids)
 #   MODEL                gpt-4o-mini (optional)
+#   BANK_CARD_NUMBER     destination card for card-to-card subscription payments
+#   BANK_CARD_HOLDER     card holder name (shown to users)
 #
 # NOTE ON PERSISTENCE (free tier):
 #   Render's free web service does NOT support mounted disks and spins down
@@ -45,12 +47,10 @@ services:
         sync: false
       - key: MODEL
         value: gpt-4o-mini
-      - key: ZARINPAL_MERCHANT
+      - key: BANK_CARD_NUMBER
         sync: false
-      - key: ZARINPAL_ENV
-        value: "sandbox"
-      - key: PAY_AMOUNT_TOMAN
-        value: "500000"
+      - key: BANK_CARD_HOLDER
+        sync: false
     # --- UNCOMMENT FOR PAID PLAN (persistent vector DB) ---
     # disks:
     #   - name: chroma-data

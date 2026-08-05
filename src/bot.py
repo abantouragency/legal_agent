@@ -49,6 +49,8 @@ from lawyer_agent import ask_lawyer
 import admin_panel as AP
 import drafter as DR
 import doc_pdf as PDF
+import brand as brand
+import receipt_verify as receipt_verify
 
 COLLECTION = None
 CFG = {}
@@ -73,10 +75,9 @@ def is_admin(uid: int) -> bool:
 
 def _access_blocked_message() -> str:
     return (
-        "🔒 دوره آزمایشی رایگان شما به پایان رسید.\n\n"
-        "برای فعال‌سازی نامحدود، ابتدا /buy را بزنید، سپس مبلغ را به ادمین @rezapilot "
-        "واریز کرده و آیدی تلگرام خود را (از @userinfobot) برای ایشان بفرستید تا "
-        "دسترسی شما تایید شود."
+        "🔒 سقف سوالات رایگان امروزت پر شد (۳ سوال در روز).\n\n"
+        "برای ادامه، اشتراک ویژه بگیر — تحلیل نامحدود + صدور اسناد حقوقی 💎\n"
+        "از منوی «💎 اشتراک ویژه» شروع کن، یا /buy رو بزن."
     )
 
 
@@ -88,79 +89,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     handle = update.effective_user.username or "—"
     AP.ensure_user(uid, handle=handle, admin_ids=CFG.get("admin_ids"))
 
-    # Payment callback: /start pay_<authority>  -> verify & activate
-    args = context.args or []
-    if args and args[0].startswith("pay_"):
-        authority = args[0][4:]
-        await _handle_payment_callback(update, context, authority, uid)
-        return
-
     await update.message.reply_text(
-        "⚖️ **موسسه حقوقی پدیدآوران عدالت**\n"
-        "🤖 دستیار و مشاور حقوقی هوشمند\n\n"
-        "با سلام و احترام؛ من دستیار هوشمند موسسه حقوقی «پدیدآوران عدالت» هستم. "
-        "وظیفه من پاسخگویی دقیق، سریع و مبتنی بر قوانین جمهوری اسلامی ایران به "
-        "پرسش‌های حقوقی شماست.\n\n"
-        "🧠 من چگونه کار می‌کنم:\n"
-        "• موضوع شما را بر اساس قوانین مدنی، کیفری، آیین دادرسی، کار، تجارت و "
-        "مسئولیت مدنی تحلیل می‌کنم.\n"
-        "• اگر اطلاعات موضوع ناقص باشد، خودم سوالات تکمیلی می‌پرسم تا دقیق‌ترین "
-        "تحلیل را ارائه دهم.\n"
-        "• موارد قانونی را با ذکر دقیق عنوان قانون و شماره ماده نقل می‌کنم.\n"
-        "• راهکارهای عملیاتی گام‌به‌گام، برآورد هزینه/زمان و ریسک‌های پرونده را "
-        "برایتان بازگو می‌کنم.\n\n"
-        "⚠️ نکته مهم: پاسخ‌های من «مشاوره حقوقی اولیه» هستند و جایگزین مراجعه حضوری "
-        "به وکیل دادگستری و بررسی پرونده اصلی نمی‌شوند.\n\n"
-        "🎁 دوره آزمایشی: ۱ تحلیل رایگان. پس از آن برای ادامه /buy را بزنید.\n\n"
-        "برای دریافت تحلیل:\n"
-        "۱. موضوع حقوقی خود را مستقیماً بنویسید؛ من خودم تحلیل و پرسش تکمیلی می‌کنم.\n"
-        "۲. اگر سوال تکمیلی پرسیدم، پاسخ دهید تا تحلیل کامل را بگیرید.\n"
-        "۳. مستندات (عکس/PDF) را بفرستید (اختیاری).\n\n"
-        "🌐 کانال موسسه: @Padid_Avaran_Edalat"
+        f"سلام دوست من 🌿 خوش اومدی.\n\n"
+        f"من اینجام که بارِ حقوقی‌ات رو سبک کنم — بدون قضاوت، بدون پیچیدگی. "
+        f"هر چی تو ذهنت هست (اجاره، طلاق، قرارداد، شکایت، ارث، کار...) راحت بگو؛ "
+        f"من می‌فهمم و راهش رو می‌گم.\n\n"
+        f"یه نکته صادقانه: من یه «دستیار هوشمند» هستم که زیر نظر یه تیم حقوقی واقعی کار می‌کنم. "
+        f"پشت این بات، {brand.ADVISOR_NAME} ({brand.ADVISOR_TITLE}) نشسته — "
+        f"هم‌بنیان‌گذار و رئیس هیئت مدیره {brand.FIRM_NAME} (تأسیس {brand.FIRM_FOUNDED}).\n\n"
+        f"بزن بریم؟ اولین موضوعت رو بنویس، یا از منوی پایین انتخاب کن 👇"
     )
     set_profile(uid, context, consented=True)
 
-    # persistent smart menu (inline keyboard)
+    # persistent smart menu (inline keyboard) — row/column layout, item 3
     await update.message.reply_text(
         "📲 منوی سریع:",
         reply_markup=main_menu_keyboard(),
     )
 
 
-async def _handle_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                                    authority: str, uid: int):
-    pending = context.bot_data.get("pending_pay", {})
-    real_uid = pending.get(authority)
-    if real_uid is None or int(real_uid) != int(uid):
-        await update.message.reply_text("⚠️ درخواست پرداخت نامعتبر یا منقضی شده است. لطفاً دوباره /buy را بزنید.")
-        return
-    amount = int(os.environ.get("PAY_AMOUNT_TOMAN", "500000"))
-    try:
-        from payments import verify_payment
-        ok = verify_payment(authority, amount)
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ خطا در تایید پرداخت: {str(e)[:200]}")
-        return
-    if ok:
-        AP.approve_purchase(uid)
-        pending.pop(authority, None)
-        await update.message.reply_text(
-            "🎉 پرداخت با موفقیت تایید شد! دسترسی نامحدود شما فعال شد.\n"
-            "حالا می‌توانید تحلیل‌های نامحدود داشته باشید. موضوع خود را بنویسید."
-        )
-    else:
-        await update.message.reply_text(
-            "❌ پرداخت تایید نشد (احتمالاً لغو شده یا ناموفق بوده). لطفاً دوباره /buy را بزنید."
-        )
-
-
 def main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Smart inline keyboard shown to users."""
+    """Smart inline keyboard — row/column layout with relevant emojis (item 3)."""
     buttons = [
         [InlineKeyboardButton("⚖️ تحلیل موضوع حقوقی", callback_data="act:analyze")],
         [InlineKeyboardButton("📄 صدور سند حقوقی", callback_data="act:draft")],
-        [InlineKeyboardButton("🛒 خرید دسترسی", callback_data="act:buy")],
-        [InlineKeyboardButton("🌐 کانال موسسه", url="https://t.me/Padid_Avaran_Edalat")],
+        [InlineKeyboardButton("💎 اشتراک ویژه", callback_data="act:buy")],
+        [InlineKeyboardButton("👤 درباره مشاور و موسسه", callback_data="act:about")],
     ]
     return InlineKeyboardMarkup(buttons)
 
@@ -176,9 +130,19 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if AP.has_access(update.effective_user.id, CFG.get("admin_ids")):
             await q.message.reply_text("📑 نوع سند را بنویسید یا دستور بزنید:\n/draft دادخواست")
         else:
-            await q.message.reply_text("🔒 صدور سند ویژه کاربران فعال است. اول /buy را بزنید.")
+            await q.message.reply_text("🔒 صدور سند ویژه کاربران فعال است. اول اشتراک بگیرید (از منوی «💎 اشتراک ویژه»).")
     elif data == "act:buy":
         await buy(update, context)
+    elif data == "act:about":
+        await q.message.reply_text(
+            f"👤 **درباره مشاور و موسسه**\n\n"
+            f"⚖️ {brand.ADVISOR_NAME} — {brand.ADVISOR_TITLE}\n\n"
+            f"🏛 {brand.FIRM_NAME}\n📅 تأسیس: {brand.FIRM_FOUNDED}\n\n"
+            f"ما یه موسسه حقوقی با‌سابقه هستیم که از سال ۹۳ داره به مردم عادی و کسب‌وکارها "
+            f"خدمت می‌کنه. این بات، راه سریعیه برای اینکه بدون هزینه‌ی اولیه و بدون معطلی، "
+            f"بفهمی حق قانونی‌ت چیه و قدم بعدی‌ت چیه.\n\n"
+            f"سوال حقوقی‌ت رو بپرس — من همین‌جا جواب می‌دم 🌿"
+        )
 
 
 
@@ -214,6 +178,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User sent free text. Run the smart workflow: clarify -> (ask | analyze)."""
     uid = update.effective_user.id
     text = update.message.text.strip()
+
+    # ensure the user record exists even if they never pressed /start
+    AP.ensure_user(uid, handle=update.effective_user.username or "—",
+                   admin_ids=CFG.get("admin_ids"))
 
     # preserve conversation history for "remembering" context
     st = context.chat_data.setdefault("conv", {"issue": "", "doc": "",
@@ -272,10 +240,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    st = context.chat_data.setdefault("conv", {"issue": "", "doc": ""})
     doc = update.message.document
     if not doc:
         return
+    uid = update.effective_user.id
+
+    # If the user previously picked a subscription tier and is now sending a
+    # receipt image, verify it intelligently and (if valid) auto-activate.
+    st = context.chat_data.setdefault("conv", {"issue": "", "doc": ""})
+    pending_tier = st.get("pending_tier")
+    if pending_tier:
+        await _handle_receipt(update, context, doc, pending_tier)
+        return
+
+    # Otherwise: treat the document as a legal case file to analyze.
     await update.message.reply_text("⏳ در حال پردازش مستند (OCR/استخراج متن)...")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(doc.file_name or "")[1])
     adl = await context.bot.get_file(doc.file_id)
@@ -292,43 +270,109 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def _handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                          doc, pending_tier: str):
+    """User sent a receipt image after picking a tier. Verify via vision."""
+    tier = brand.tier_by_id(pending_tier)
+    if not tier:
+        await update.message.reply_text("⚠️ تیر انتخابی نامعتبر؛ لطفاً دوباره /buy را بزنید.")
+        return
+    uid = update.effective_user.id
+    await update.message.reply_text("🔎 در حال بررسی عکس رسید با هوش مصنوعی...")
+
+    # download to a temp file
+    suffix = os.path.splitext(doc.file_name or ".jpg")[1] or ".jpg"
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    adl = await context.bot.get_file(doc.file_id)
+    await adl.download_to_drive(tmp.name)
+
+    loop = asyncio.get_event_loop()
+    try:
+        verdict = await loop.run_in_executor(
+            None, lambda: receipt_verify.verify_receipt_image(
+                tmp.name, tier["price"],
+                openai_key=CFG.get("openai_key"),
+                model=CFG.get("model", "gpt-4o-mini"))
+        )
+    except Exception as e:
+        os.unlink(tmp.name)
+        await update.message.reply_text(
+            f"⚠️ بررسی رسید با خطا مواجه شد: {str(e)[:200]}\n"
+            "لطفاً رسید را دوباره بفرستید یا به @rezapilot اطلاع دهید."
+        )
+        return
+
+    # forward the receipt to the channel/admin for oversight regardless of verdict
+    try:
+        with open(tmp.name, "rb") as f:
+            await context.bot.send_document(
+                chat_id=CFG.get("channel_id") or update.effective_user.id,
+                document=f,
+                caption=f"🧾 رسید اشتراک {tier['label']} از کاربر {uid}\n"
+                        f"تشخیص مبلغ: {verdict.get('amount')}\n"
+                        f"نتیجه: {'✅ تایید خودکار' if verdict['ok'] else '⏳ نیاز به تایید ادمین'}"
+            )
+    except Exception:
+        pass
+    os.unlink(tmp.name)
+
+    if verdict["ok"]:
+        AP.approve_purchase(uid, months=tier["months"])
+        context.chat_data["conv"].pop("pending_tier", None)
+        await update.message.reply_text(
+            f"🎉 تایید شد! اشتراک {tier['label']} ({tier['months']} ماه) برایت فعال شد.\n"
+            "حالا می‌تونی تحلیل نامحدود داشته باشی و سند حقوقی تنظیم کنی 💎"
+        )
+    else:
+        # mark pending so admin can /approve later
+        AP.request_purchase(uid, tier_id=tier["id"], months=tier["months"])
+        await update.message.reply_text(
+            f"⏳ مبلغ از عکس بخوبی تایید نشد ({verdict.get('reason')}).\n"
+            "رسیدت برای ادمین ارسال شد و پس از تایید دستی، اشتراکت فعال می‌شه.\n"
+            "اگر اشتباه بود، دوباره عکس واضح‌تری بفرست."
+        )
+
+
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if AP.has_access(uid, CFG.get("admin_ids")):
-        await update.message.reply_text("✅ شما در حال حاضر دسترسی کامل دارید.")
+        await update.message.reply_text("✅ شما در حال حاضر اشتراک فعال دارید.")
         return
 
-    amount = int(os.environ.get("PAY_AMOUNT_TOMAN", "500000"))  # default 500k toman
-    bot_username = (update.effective_bot.username or "Legal_Agent_Robot")
+    card = os.environ.get("BANK_CARD_NUMBER", "—— (کارت بانکی توسط ادمین ست می‌شود) ——")
+    card_holder = os.environ.get("BANK_CARD_HOLDER", "موسسه حقوقی پدیدآوران عدالت")
+    await update.message.reply_text(
+        "💎 **اشتراک ویژه — تحلیل نامحدود + صدور اسناد**\n\n"
+        "با اشتراک، بی‌نهایت تحلیل حقوقی + تنظیم سند (دادخواست/لایحه/قرارداد) داری.\n"
+        "۳ سطح دسترسی داریم — هر چی طولانی‌تر، به‌صرفه‌تر 👇\n\n"
+        "💡 پیشنهاد من: اشتراک ۶ ماهه! چون قیمتش از ۲ تا ۳ ماهه منصفانه‌تره و "
+        "برای پرونده‌هایی که زمان می‌برن (مثل طلاق یا مطالبه طولانی) کاملاً می‌ارزه.\n\n"
+        f"🏦 **واریز به کارت:**\n`{card}`\n👤 به نام: {card_holder}\n\n"
+        "بعد از انتخاب سطح و کارت‌به‌کارت، **عکس رسید رو همین‌جا بفرست** — من "
+        "هوشمندانه چک می‌کنم و اشتراکت رو خودکار فعال می‌کنم 🤖✨",
+        reply_markup=brand.subscription_menu_keyboard(),
+    )
 
-    # Try ZarinPal first; fall back to manual card if not configured.
-    try:
-        from payments import request_payment
-        callback = f"https://t.me/{bot_username}?start=pay"
-        authority, pay_url = request_payment(
-            amount_toman=amount,
-            description=f"اشتراک نامحدود ایجنت حقوقی - کاربر {uid}",
-            callback_url=callback,
-        )
-        # stash authority -> uid so the /start pay_<auth> callback can verify
-        context.bot_data.setdefault("pending_pay", {})[authority] = uid
-        await update.message.reply_text(
-            f"🛒 پرداخت {amount:,} تومان (اشتراک نامحدود)\n\n"
-            f"روی لینک زیر کلیک کن و پرداخت را انجام بده:\n{pay_url}\n\n"
-            f"پس از پرداخت، خودکار به ربات برمی‌گردی و دسترسی فعال می‌شود.\n"
-            f"(اگر بسته شد، /start را بزن.)"
-        )
+
+async def sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User picked a subscription tier (sub:<id>)."""
+    q = update.callback_query
+    await q.answer()
+    tier = brand.tier_by_id((q.data or "")[4:])
+    if not tier:
+        await q.message.reply_text("⚠️ گزینه نامعتبر.")
         return
-    except Exception as e:
-        # merchant not configured or API error -> fall back to manual card
-        print(f"[payment] ZarinPal unavailable ({e}); falling back to manual.")
-        if AP.request_purchase(uid):
-            await update.message.reply_text(
-                "🛒 درخواست خرید ثبت شد.\n\n"
-                "لطفاً مبلغ را به کارت/آیدی ادمین @rezapilot واریز کرده و رسید + آیدی "
-                "تلگرام خود (از @userinfobot) را برای ایشان بفرستید. پس از تایید، دسترسی "
-                "نامحدود برایتان فعال می‌شود."
-            )
+    uid = update.effective_user.id
+    # Flag pending purchase with the chosen tier so admin can activate + track.
+    AP.request_purchase(uid, tier_id=tier["id"], months=tier["months"])
+    # Remember the chosen tier in chat_data so the next receipt photo is verified.
+    context.chat_data.setdefault("conv", {})["pending_tier"] = tier["id"]
+    await q.message.reply_text(
+        f"🛒 **اشتراک {tier['label']} — {tier['price']:,} تومان** ثبت شد.\n\n"
+        f"لطفاً مبلغ را به کارت یا آیدی ادمین @rezapilot واریز کن و رسید + آیدی تلگرامت "
+        f"(از @userinfobot) رو براش بفرست. پس از تایید، اشتراک {tier['label']} "
+        f"برایت فعال می‌شه و تا {tier['months']} ماه دسترسی کامل داری 💎"
+    )
 
 
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -377,9 +421,14 @@ async def _run_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     # private summary (truncated) + full report in channel
     summary = opinion.raw if len(opinion.raw) <= 4000 else opinion.raw[:4000] + "\n...(ادامه در کانال)"
-    await update.message.reply_text(summary)
+    # prepend the advisor identity header so every analysis carries the brand (item 1)
+    header = (
+        f"⚖️ {brand.ADVISOR_NAME} | {brand.FIRM_NAME}\n"
+        f"━━━━━━━━━━━━━━━━\n\n"
+    )
+    await update.message.reply_text(header + summary)
 
-    # channel report with user info
+    # channel report with user info + advisor attribution
     prof = get_profile(uid, context)
     name = prof.get("name", "—")
     phone = prof.get("phone", "—")
@@ -387,15 +436,23 @@ async def _run_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE,
     report = (
         f"📋 گزارش جدید از ایجنت حقوقی\n━━━━━━━━━━━━━━━━\n"
         f"👤 کاربر: {name} | 📞 {phone}\n🔗 @{handle} | ID: {uid}\n"
-        f"━━━━━━━━━━━━━━━━\n📝 موضوع:\n{issue[:1500]}\n\n━━━━━━━━━━━━━━━━\n{opinion.raw}"
+        f"━━━━━━━━━━━━━━━━\n📝 موضوع:\n{issue[:1500]}\n\n━━━━━━━━━━━━━━━━\n{opinion.raw}\n\n"
+        f"━━━━━━━━━━━━━━━━\n{brand.ADVISOR_SIGNATURE}"
     )
     await post_to_channel(report)
     AP.incr_analyses(uid)
 
     if not AP.has_access(uid, CFG.get("admin_ids")):
-        await update.message.reply_text(
-            "✅ تحلیل رایگان شما ارائه شد. برای تحلیل‌های بیشتر /buy را بزنید."
-        )
+        remaining = AP.trial_remaining(uid)
+        if remaining > 0:
+            await update.message.reply_text(
+                f"✅ تحلیل رایگانت انجام شد. امروز {remaining} سوال رایگان دیگه داری 🌿"
+            )
+        else:
+            await update.message.reply_text(
+                "✅ تحلیل رایگان امروزت تموم شد. برای ادامه اشتراک بگیر (💎 اشتراک ویژه) — "
+                "تحلیل نامحدود + صدور اسناد."
+            )
     # reset conversation (but keep nothing; fresh start next time)
     context.chat_data["conv"] = {"issue": "", "doc": "", "history": [], "awaiting": False}
     # show the smart menu again
@@ -430,11 +487,13 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     uid = int(args[0])
     if AP.approve_purchase(uid):
-        await update.message.reply_text(f"✅ دسترسی نامحدود برای کاربر {uid} فعال شد.")
+        await update.message.reply_text(f"✅ اشتراک کاربر {uid} فعال شد.")
         # notify the user if possible
         try:
+            u = AP.get_user(uid) or {}
+            months = u.get("tier_months") or 1
             await _app.bot.send_message(chat_id=uid,
-                text="🎉 دسترسی نامحدود شما فعال شد! حالا می‌توانید تحلیل‌های نامحدود داشته باشید.")
+                text=f"🎉 اشتراک {months} ماهه شما فعال شد! حالا می‌توانید تحلیل‌های نامحدود داشته باشید و سند حقوقی تنظیم کنید 💎")
         except Exception:
             pass
     else:
@@ -472,8 +531,8 @@ async def draft_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not AP.has_access(uid, CFG.get("admin_ids")):
         await update.message.reply_text(
-            "🔒 صدور اسناد حقوقی ویژه کاربران فعال (پرداخت‌شده) است.\n"
-            "برای فعال‌سازی /buy را بزنید و پس از تایید ادمین استفاده کنید."
+            "🔒 صدور اسناد حقوقی ویژه کاربران دارای اشتراک فعال است.\n"
+            "برای فعال‌سازی، از منوی «💎 اشتراک ویژه» یا /buy اقدام کن."
         )
         return
 
@@ -650,7 +709,8 @@ def main():
     _app.add_handler(CommandHandler("draft", draft_cmd))
     _app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     _app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, profile_input))
-    _app.add_handler(CallbackQueryHandler(menu_callback))
+    _app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^act:"))
+    _app.add_handler(CallbackQueryHandler(sub_callback, pattern=r"^sub:"))
 
     # Global error handler so the bot never silently hangs/crashes on an
     # unhandled exception (e.g. a slow OpenAI call) — the user always gets a

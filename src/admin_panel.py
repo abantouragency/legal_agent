@@ -64,7 +64,11 @@ def ensure_user(user_id: int, name: str = "—", phone: str = "—",
         store["users"][uid] = {
             "name": name, "phone": phone, "handle": handle,
             "access": access, "trial_used": False,
-            "purchase_pending": False, "paid_at": None,
+            "trial_date": None,        # YYYY-MM-DD of last counted free question
+            "trial_count": 0,          # free questions used today (resets daily)
+            "tier_id": None, "tier_months": 0, "paid_until": None,
+            "purchase_pending": False, "purchase_tier": None,
+            "paid_at": None,
             "analyses_done": 0, "joined_at": str(date.today()),
         }
         _save(store)
@@ -84,18 +88,48 @@ def has_access(user_id: int, admin_ids: Optional[list[int]] = None) -> bool:
     return u["access"] in ("paid", "admin")
 
 
+def daily_trial_limit() -> int:
+    return 3  # item 5: free tier = 3 questions per day
+
+
 def consume_trial(user_id: int) -> bool:
-    """If user is on trial and hasn't used it, mark used. Returns True if a
-    free analysis was just consumed."""
+    """If user is on the free tier and hasn't used today's 3 questions yet,
+    count one and return True. Resets automatically each calendar day.
+
+    Returns True if a free analysis was just consumed (allowed).
+    """
+    from brand import FREE_DAILY_LIMIT
     store = _load()
     u = store["users"].get(str(user_id))
     if not u:
         return False
-    if u["access"] == "trial" and not u["trial_used"]:
-        u["trial_used"] = True
-        _save(store)
-        return True
-    return False
+    if u["access"] in ("paid", "admin"):
+        return True  # paid users are not limited
+    today = str(date.today())
+    # reset counter if it's a new day
+    if u.get("trial_date") != today:
+        u["trial_date"] = today
+        u["trial_count"] = 0
+        u["trial_used"] = False
+    if u.get("trial_count", 0) >= FREE_DAILY_LIMIT:
+        return False
+    u["trial_count"] = u.get("trial_count", 0) + 1
+    u["trial_used"] = True
+    _save(store)
+    return True
+
+
+def trial_remaining(user_id: int) -> int:
+    """How many free questions left today (for messaging)."""
+    from brand import FREE_DAILY_LIMIT
+    store = _load()
+    u = store["users"].get(str(user_id))
+    if not u:
+        return FREE_DAILY_LIMIT
+    today = str(date.today())
+    if u.get("trial_date") != today:
+        return FREE_DAILY_LIMIT
+    return max(0, FREE_DAILY_LIMIT - u.get("trial_count", 0))
 
 
 def incr_analyses(user_id: int):
@@ -109,8 +143,10 @@ def incr_analyses(user_id: int):
 # --------------------------------------------------------------------------
 # purchase flow
 # --------------------------------------------------------------------------
-def request_purchase(user_id: int) -> bool:
-    """User asks to buy. Flags pending. Returns True if newly requested."""
+def request_purchase(user_id: int, tier_id: Optional[str] = None,
+                     months: int = 0) -> bool:
+    """User asks to buy. Flags pending + records chosen tier. Returns True if
+    newly requested (so the caller only messages on first request)."""
     store = _load()
     u = store["users"].get(str(user_id))
     if not u:
@@ -120,19 +156,27 @@ def request_purchase(user_id: int) -> bool:
     if u["purchase_pending"]:
         return False
     u["purchase_pending"] = True
+    u["purchase_tier"] = tier_id
+    u["tier_months"] = months
     _save(store)
     return True
 
 
-def approve_purchase(user_id: int, admin_ids: Optional[list[int]] = None) -> bool:
-    """Admin approves -> user becomes 'paid'."""
+def approve_purchase(user_id: int, admin_ids: Optional[list[int]] = None,
+                     months: Optional[int] = None) -> bool:
+    """Admin approves -> user becomes 'paid'. If months given (or stored tier
+    months), set paid_until = today + months. Otherwise default 1 month."""
+    from datetime import date as _date, timedelta
     store = _load()
     u = store["users"].get(str(user_id))
     if not u:
         return False
+    if months is None:
+        months = u.get("tier_months") or 1
     u["access"] = "paid"
     u["purchase_pending"] = False
-    u["paid_at"] = str(date.today())
+    u["paid_at"] = str(_date.today())
+    u["paid_until"] = str(_date.today() + timedelta(days=30 * months))
     _save(store)
     return True
 
