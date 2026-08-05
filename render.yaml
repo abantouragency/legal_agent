@@ -45,6 +45,12 @@ services:
         sync: false
       - key: MODEL
         value: gpt-4o-mini
+      - key: ZARINPAL_MERCHANT
+        sync: false
+      - key: ZARINPAL_ENV
+        value: "sandbox"
+      - key: PAY_AMOUNT_TOMAN
+        value: "500000"
     # --- UNCOMMENT FOR PAID PLAN (persistent vector DB) ---
     # disks:
     #   - name: chroma-data

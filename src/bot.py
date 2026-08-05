@@ -87,6 +87,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     handle = update.effective_user.username or "—"
     AP.ensure_user(uid, handle=handle, admin_ids=CFG.get("admin_ids"))
+
+    # Payment callback: /start pay_<authority>  -> verify & activate
+    args = context.args or []
+    if args and args[0].startswith("pay_"):
+        authority = args[0][4:]
+        await _handle_payment_callback(update, context, authority, uid)
+        return
+
     await update.message.reply_text(
         "⚖️ **موسسه حقوقی پدیدآوران عدالت**\n"
         "🤖 دستیار و مشاور حقوقی هوشمند\n\n"
@@ -117,6 +125,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📲 منوی سریع:",
         reply_markup=main_menu_keyboard(),
     )
+
+
+async def _handle_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                    authority: str, uid: int):
+    pending = context.bot_data.get("pending_pay", {})
+    real_uid = pending.get(authority)
+    if real_uid is None or int(real_uid) != int(uid):
+        await update.message.reply_text("⚠️ درخواست پرداخت نامعتبر یا منقضی شده است. لطفاً دوباره /buy را بزنید.")
+        return
+    amount = int(os.environ.get("PAY_AMOUNT_TOMAN", "500000"))
+    try:
+        from payments import verify_payment
+        ok = verify_payment(authority, amount)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ خطا در تایید پرداخت: {str(e)[:200]}")
+        return
+    if ok:
+        AP.approve_purchase(uid)
+        pending.pop(authority, None)
+        await update.message.reply_text(
+            "🎉 پرداخت با موفقیت تایید شد! دسترسی نامحدود شما فعال شد.\n"
+            "حالا می‌توانید تحلیل‌های نامحدود داشته باشید. موضوع خود را بنویسید."
+        )
+    else:
+        await update.message.reply_text(
+            "❌ پرداخت تایید نشد (احتمالاً لغو شده یا ناموفق بوده). لطفاً دوباره /buy را بزنید."
+        )
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
@@ -262,15 +297,38 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if AP.has_access(uid, CFG.get("admin_ids")):
         await update.message.reply_text("✅ شما در حال حاضر دسترسی کامل دارید.")
         return
-    if AP.request_purchase(uid):
-        await update.message.reply_text(
-            "🛒 درخواست خرید ثبت شد.\n\n"
-            "لطفاً مبلغ را به کارت/آیدی ادمین @rezapilot واریز کرده و رسید + آیدی "
-            "تلگرام خود (از @userinfobot) را برای ایشان بفرستید. پس از تایید، دسترسی "
-            "نامحدود برایتان فعال می‌شود."
+
+    amount = int(os.environ.get("PAY_AMOUNT_TOMAN", "500000"))  # default 500k toman
+    bot_username = (update.effective_bot.username or "Legal_Agent_Robot")
+
+    # Try ZarinPal first; fall back to manual card if not configured.
+    try:
+        from payments import request_payment
+        callback = f"https://t.me/{bot_username}?start=pay"
+        authority, pay_url = request_payment(
+            amount_toman=amount,
+            description=f"اشتراک نامحدود ایجنت حقوقی - کاربر {uid}",
+            callback_url=callback,
         )
-    else:
-        pass
+        # stash authority -> uid so the /start pay_<auth> callback can verify
+        context.bot_data.setdefault("pending_pay", {})[authority] = uid
+        await update.message.reply_text(
+            f"🛒 پرداخت {amount:,} تومان (اشتراک نامحدود)\n\n"
+            f"روی لینک زیر کلیک کن و پرداخت را انجام بده:\n{pay_url}\n\n"
+            f"پس از پرداخت، خودکار به ربات برمی‌گردی و دسترسی فعال می‌شود.\n"
+            f"(اگر بسته شد، /start را بزن.)"
+        )
+        return
+    except Exception as e:
+        # merchant not configured or API error -> fall back to manual card
+        print(f"[payment] ZarinPal unavailable ({e}); falling back to manual.")
+        if AP.request_purchase(uid):
+            await update.message.reply_text(
+                "🛒 درخواست خرید ثبت شد.\n\n"
+                "لطفاً مبلغ را به کارت/آیدی ادمین @rezapilot واریز کرده و رسید + آیدی "
+                "تلگرام خود (از @userinfobot) را برای ایشان بفرستید. پس از تایید، دسترسی "
+                "نامحدود برایتان فعال می‌شود."
+            )
 
 
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
