@@ -47,14 +47,19 @@ class _H(BaseHTTPRequestHandler):
                 data = json.loads(body.decode("utf-8"))
                 if _APP is not None:
                     from telegram import Update
-                    update = Update.de_json(data, _APP.bot)
+                    try:
+                        # Newer python-telegram-bot: Update is built directly
+                        # from the dict; de_json also works but needs the bot.
+                        update = Update.de_json(data, _APP.bot)
+                    except Exception:
+                        update = Update(data)
                     _APP.update_queue.put_nowait(update)
                     self.send_response(200)
                     self.end_headers()
                     self.wfile.write(b"ok")
                     return
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[webhook POST error] {e}")
             self.send_response(500)
             self.end_headers()
             return
