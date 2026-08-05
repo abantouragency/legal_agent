@@ -167,7 +167,7 @@ async def profile_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         st["awaiting"] = False
         coll = ensure_collection()
         loop = asyncio.get_event_loop()
-        hits = await loop.run_in_executor(None, query_collection, coll, st["issue"], 6)
+        hits = await loop.run_in_executor(None, query_collection, coll, st["issue"], 10)
         await _run_analysis(update, context, hits, st.get("history", []))
         return
 
@@ -211,7 +211,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     coll = ensure_collection()
     loop = asyncio.get_event_loop()
     try:
-        hits = await loop.run_in_executor(None, query_collection, coll, text, 6)
+        hits = await loop.run_in_executor(None, query_collection, coll, text, 10)
     except Exception as e:
         if "insufficient_quota" in str(e) or "RateLimitError" in str(e) or "429" in str(e):
             await update.message.reply_text(
@@ -285,7 +285,7 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     coll = ensure_collection()
     loop = asyncio.get_event_loop()
-    hits = await loop.run_in_executor(None, query_collection, coll, issue, 6)
+    hits = await loop.run_in_executor(None, query_collection, coll, issue, 10)
     await _run_analysis(update, context, hits, st.get("history", []))
 
 
@@ -434,7 +434,7 @@ async def draft_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     coll = ensure_collection()
     loop = asyncio.get_event_loop()
     try:
-        hits = await loop.run_in_executor(None, query_collection, coll, issue, 6)
+        hits = await loop.run_in_executor(None, query_collection, coll, issue, 10)
         draft = await loop.run_in_executor(
             None, lambda: DR.draft_document(doc_type, issue, hits,
                                             openai_key=CFG.get("openai_key"),
