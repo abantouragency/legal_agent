@@ -146,7 +146,7 @@ def clarify(issue_text: str, hits: list[dict], doc_text: Optional[str] = None,
     if not key:
         raise RuntimeError("OPENAI_API_KEY not set. Provide it or set env var.")
     from openai import OpenAI
-    client = OpenAI(api_key=key)
+    client = OpenAI(api_key=key, timeout=60, max_retries=2)
 
     prompt = build_clarify_prompt(issue_text, doc_text, hits, history or [])
     resp = client.chat.completions.create(
@@ -270,7 +270,7 @@ def ask_lawyer(issue_text: str, hits: list[dict], doc_text: Optional[str] = None
     if not key:
         raise RuntimeError("OPENAI_API_KEY not set. Provide it or set env var.")
     from openai import OpenAI
-    client = OpenAI(api_key=key)
+    client = OpenAI(api_key=key, timeout=90, max_retries=2)
 
     user_prompt = build_user_prompt(issue_text, doc_text, hits, history)
     resp = client.chat.completions.create(

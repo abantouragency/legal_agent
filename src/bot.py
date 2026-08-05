@@ -194,6 +194,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(_access_blocked_message())
             return
 
+    # Filter out trivial greetings / non-legal chatter so the bot doesn't
+    # hang calling the LLM on "سلام". Require a minimum of real content.
+    if len(text.strip()) < 4 or text.strip() in (
+        "سلام", "درود", "خوبی", "سلام علیکم", "هاي", "hi", "hello", "سلام👋"
+    ):
+        await update.message.reply_text(
+            "👋 سلام. من دستیار حقوقی موسسه پدیدآوران عدالت هستم.\n"
+            "لطفاً **موضوع حقوقی** خود را بنویسید (مثلاً: «کارفرما ۴ ماه حقوقم "
+            "را نپرداخته و قرارداد کتبی ندارم») تا تحلیلش کنم."
+        )
+        return
+
     await update.message.reply_text("🔎 در حال بررسی موضوع و جستجوی مواد قانونی...")
 
     coll = ensure_collection()
@@ -207,36 +219,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "https://platform.openai.com روی Billing شارژ کنید، سپس دوباره پیام دهید."
             )
             return
-        raise
+        await update.message.reply_text(f"⚠️ خطا در جستجوی مواد: {str(e)[:200]}")
+        return
 
+    # Analyze directly (clarify step removed to avoid hangs; the deep analysis
+    # prompt already asks for a complete, actionable opinion).
     try:
-        cl = await loop.run_in_executor(
-            None, lambda: clarify(text, hits, doc_text=st.get("doc") or None,
-                                  history=hist, openai_key=CFG.get("openai_key"),
-                                  model=CFG.get("model", "gpt-4o-mini"))
-        )
+        await _run_analysis(update, context, hits, hist)
     except Exception as e:
-        if "insufficient_quota" in str(e) or "RateLimitError" in str(e) or "429" in str(e):
+        err = str(e)
+        if "insufficient_quota" in err or "RateLimitError" in err or "429" in err:
             await update.message.reply_text(
                 "⚠️ حساب OpenAI شارژ نشده یا سقف استفاده (quota) تمام شده.\nلطفاً شارژ کنید."
             )
             return
-        await update.message.reply_text(f"⚠️ خطا در پردازش: {str(e)[:200]}")
-        return
-
-    if cl.needs_info and cl.questions:
-        # ask targeted questions, keep the issue + history, await answers
-        st["awaiting"] = True
-        q_text = "\n".join(f"❓ {i}. {q}" for i, q in enumerate(cl.questions, 1))
-        await update.message.reply_text(
-            f"📋 موضوع شما دریافت شد (نوع پرونده احتمالی: {cl.case_type or 'نامشخص'}).\n"
-            f"برای تحلیل دقیق‌تر، لطفاً به این سوالات پاسخ دهید:\n\n{q_text}\n\n"
-            f"پس از پاسخ، تحلیل کامل را دریافت خواهید کرد."
-        )
-        return
-
-    # enough info -> analyze now
-    await _run_analysis(update, context, hits, hist)
+        await update.message.reply_text(f"⚠️ خطا در تحلیل: {err[:300]}")
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -582,6 +579,22 @@ def main():
     _app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     _app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, profile_input))
     _app.add_handler(CallbackQueryHandler(menu_callback))
+
+    # Global error handler so the bot never silently hangs/crashes on an
+    # unhandled exception (e.g. a slow OpenAI call) — the user always gets a
+    # message instead of being stuck on "در حال بررسی...".
+    async def _global_error(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            if update and update.effective_message:
+                await update.effective_message.reply_text(
+                    "⚠️ متأسفانه خطایی پیش آمد. لطفاً چند لحظه صبر کنید و دوباره موضوع "
+                    "را بنویسید. اگر ادامه داشت، مبلغ اشتراک را بررسی کنید."
+                )
+        except Exception:
+            pass
+        print(f"[global error] {context.error}")
+
+    _app.add_error_handler(_global_error)
 
     print("🤖 Bot started. Press Ctrl+C to stop.")
     _app.run_polling()
