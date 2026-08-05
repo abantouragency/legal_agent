@@ -615,25 +615,10 @@ def main():
     # call run_polling (which caused 409 Conflict on Render) nor run_webhook
     # (which collides on the same port). Instead web_health owns the port and the
     # Application just processes the queue.
-    import asyncio
-    import web_health
-
-    public_url = os.environ.get("PUBLIC_URL", "").rstrip("/")
-    if public_url:
-        try:
-            # set_webhook is a coroutine -> run it on a fresh loop before we
-            # build the long-running app loop below.
-            asyncio.run(_tg.set_webhook(f"{public_url}/webhook"))
-            print(f"🔗 webhook set to {public_url}/webhook")
-        except Exception as e:
-            print(f"set_webhook warning (non-fatal): {e}")
-    else:
-        print("⚠️ PUBLIC_URL not set; webhook not registered. Set PUBLIC_URL to "
-              "https://<your-app>.onrender.com so Telegram can reach /webhook.")
-
     # Use PTB's own run_webhook — the officially supported webhook server.
     # It binds $PORT, serves /webhook, parses updates, runs handlers, and
-    # sets the webhook on Telegram itself (no manual set_webhook needed).
+    # sets the webhook on Telegram itself during its bootstrap (no manual
+    # set_webhook needed — calling it here causes flood-control errors).
     # No getUpdates polling -> no 409 Conflict on Render.
     public_url = os.environ.get("PUBLIC_URL", "").rstrip("/")
     if not public_url:

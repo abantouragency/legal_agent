@@ -6,7 +6,7 @@ numpy>=2.4.6
 openai>=2.53.0
 pypdf>=6.14.2
 python-dotenv>=1.2.2
-python-telegram-bot>=22.8
+python-telegram-bot[webhooks]>=22.8
 requests>=2.34.2
 # PDF / Persian font stack (optional but recommended)
 fpdf2>=2.8.0
