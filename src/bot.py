@@ -598,15 +598,29 @@ def main():
     # unhandled exception (e.g. a slow OpenAI call) — the user always gets a
     # message instead of being stuck on "در حال بررسی...".
     async def _global_error(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        err = context.error
+        # Surface the real cause so the user (and admin) can diagnose instead of
+        # getting a generic "try again" that hides the root cause.
+        detail = ""
+        if err is not None:
+            msg = str(err)
+            if "OPENAI_API_KEY" in msg:
+                detail = "\nعلت: کلید OpenAI روی سرور ست نشده (OPENAI_API_KEY در تنظیمات رندر خالی است)."
+            elif "insufficient_quota" in msg or "RateLimitError" in msg or "429" in msg:
+                detail = "\nعلت: حساب OpenAI شارژ نشده یا سقف استفاده تمام شده."
+            elif "CHANNEL_ID" in msg:
+                detail = "\nعلت: شناسه کانال ست نشده."
+            else:
+                detail = f"\nجزئیات: {msg[:200]}"
         try:
             if update and update.effective_message:
                 await update.effective_message.reply_text(
-                    "⚠️ متأسفانه خطایی پیش آمد. لطفاً چند لحظه صبر کنید و دوباره موضوع "
-                    "را بنویسید. اگر ادامه داشت، مبلغ اشتراک را بررسی کنید."
+                    "⚠️ متأسفانه خطایی پیش آمد." + detail +
+                    "\nلطفاً چند لحظه صبر کنید و دوباره موضوع را بنویسید."
                 )
         except Exception:
             pass
-        print(f"[global error] {context.error}")
+        print(f"[global error] {err}")
 
     _app.add_error_handler(_global_error)
 
