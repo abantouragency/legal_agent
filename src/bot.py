@@ -575,19 +575,11 @@ def main():
     if not token:
         raise RuntimeError("BOT_TOKEN not set in .env")
 
-    # On Render free tier, long-polling causes 409 Conflict when more than one
-    # instance/worker shares the token. We therefore run in WEBHOOK mode:
-    # Telegram POSTs updates to /webhook and the health server enqueues them.
-    # This fully removes the "two getUpdates" race. We still clear any stale
-    # webhook first so a broken prior state cannot block us.
-    try:
-        from telegram import Bot as _TG_Bot
-        _tg = _TG_Bot(token)
-        _tg.delete_webhook(drop_pending_updates=True)
-        print("🧹 cleared any stale webhook / competing getUpdates session")
-    except Exception as e:
-        print(f"delete_webhook warning (non-fatal): {e}")
-
+    # Webhook mode: Telegram POSTs updates to /webhook and web_health enqueues
+    # them. We do NOT call delete_webhook here (it would wipe the webhook we set
+    # below). The app sets the webhook on startup via _tg.set_webhook.
+    from telegram import Bot as _TG_Bot
+    _tg = _TG_Bot(token)
     _app = Application.builder().token(token).build()
     _app.add_handler(CommandHandler("start", start))
     _app.add_handler(CommandHandler("buy", buy))
@@ -623,14 +615,15 @@ def main():
     # call run_polling (which caused 409 Conflict on Render) nor run_webhook
     # (which collides on the same port). Instead web_health owns the port and the
     # Application just processes the queue.
+    import asyncio
     import web_health
-    web_health.set_application(_app)
-    web_health.start_health_server()
 
     public_url = os.environ.get("PUBLIC_URL", "").rstrip("/")
     if public_url:
         try:
-            _tg.set_webhook(f"{public_url}/webhook")
+            # set_webhook is a coroutine -> run it on a fresh loop before we
+            # build the long-running app loop below.
+            asyncio.run(_tg.set_webhook(f"{public_url}/webhook"))
             print(f"🔗 webhook set to {public_url}/webhook")
         except Exception as e:
             print(f"set_webhook warning (non-fatal): {e}")
@@ -638,23 +631,24 @@ def main():
         print("⚠️ PUBLIC_URL not set; webhook not registered. Set PUBLIC_URL to "
               "https://<your-app>.onrender.com so Telegram can reach /webhook.")
 
+    # Use PTB's own run_webhook — the officially supported webhook server.
+    # It binds $PORT, serves /webhook, parses updates, runs handlers, and
+    # sets the webhook on Telegram itself (no manual set_webhook needed).
+    # No getUpdates polling -> no 409 Conflict on Render.
+    public_url = os.environ.get("PUBLIC_URL", "").rstrip("/")
+    if not public_url:
+        print("⚠️ PUBLIC_URL not set; webhook not registered. Set PUBLIC_URL to "
+              "https://<your-app>.onrender.com so Telegram can reach /webhook.")
+
     print("🤖 Bot started in WEBHOOK mode. Press Ctrl+C to stop.")
-    # web_health owns the HTTP port and feeds updates into app.update_queue.
-    # We just initialize + start the app (no polling, no webhook server) and let
-    # it process the queue. Use run() which idles on the update queue.
-    import asyncio
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(_app.initialize())
-    loop.run_until_complete(_app.start())
-    print("✅ app initialized + started; processing webhook queue")
-    try:
-        loop.run_forever()
-    except (KeyboardInterrupt, SystemExit):
-        pass
-    finally:
-        loop.run_until_complete(_app.stop())
-        loop.run_until_complete(_app.shutdown())
+    _app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", "8080")),
+        url_path="/webhook",
+        webhook_url=f"{public_url}/webhook" if public_url else None,
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+    )
 
 
 if __name__ == "__main__":
