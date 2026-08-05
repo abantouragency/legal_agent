@@ -561,34 +561,8 @@ def ensure_collection():
     return COLLECTION
 
 
-def _acquire_single_instance_lock():
-    """Prevent two bot processes (e.g. two Render workers or an overlapping
-    redeploy) from polling the same Telegram token at once, which causes 409
-    Conflict. Uses an OS-level advisory file lock that is automatically
-    released if the process dies, so it cannot deadlock across restarts.
-    Cross-platform: fcntl on Linux/macOS, msvcrt on Windows.
-    """
-    import tempfile as _tf
-    lock_path = os.path.join(_tf.gettempdir(), "legal_agent_bot.lock")
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
-    try:
-        if sys.platform == "win32":
-            import msvcrt
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return fd  # keep the fd open for the process lifetime
-    except OSError:
-        os.close(fd)
-        print("⛔ Another instance of the bot is already running (lock held). "
-              "Exiting to avoid Telegram 409 Conflict.")
-        sys.exit(0)
-
-
 def main():
     global _app, CFG
-    _acquire_single_instance_lock()  # fixes 409 Conflict: only one poller at a time
     from dotenv import load_dotenv
     load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
     CFG = {
@@ -644,8 +618,11 @@ def main():
 
     _app.add_error_handler(_global_error)
 
-    # Start the HTTP server that both answers /healthz AND receives Telegram
-    # webhook POSTs (enqueuing them into the Application).
+    # In webhook mode the HTTP server (web_health) receives Telegram POSTs on
+    # /webhook and enqueues them into the Application's update_queue. We do NOT
+    # call run_polling (which caused 409 Conflict on Render) nor run_webhook
+    # (which collides on the same port). Instead web_health owns the port and the
+    # Application just processes the queue.
     import web_health
     web_health.set_application(_app)
     web_health.start_health_server()
@@ -662,14 +639,22 @@ def main():
               "https://<your-app>.onrender.com so Telegram can reach /webhook.")
 
     print("🤖 Bot started in WEBHOOK mode. Press Ctrl+C to stop.")
-    _app.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", "8080")),
-        url_path="/webhook",
-        webhook_url=None,
-        drop_pending_updates=True,
-        allowed_updates=Update.ALL_TYPES,
-    )
+    # web_health owns the HTTP port and feeds updates into app.update_queue.
+    # We just initialize + start the app (no polling, no webhook server) and let
+    # it process the queue. Use run() which idles on the update queue.
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(_app.initialize())
+    loop.run_until_complete(_app.start())
+    print("✅ app initialized + started; processing webhook queue")
+    try:
+        loop.run_forever()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        loop.run_until_complete(_app.stop())
+        loop.run_until_complete(_app.shutdown())
 
 
 if __name__ == "__main__":

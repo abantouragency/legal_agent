@@ -4,12 +4,12 @@ web_health.py
 A tiny HTTP server so Render (or any PaaS) keeps the bot alive via health
 checks, AND it terminates Telegram **webhook** updates.
 
-When running in webhook mode (recommended on Render to avoid the 409 Conflict
-that long-polling causes when multiple instances share a token), Telegram posts
-updates to https://<your-app>.onrender.com/webhook and this handler feeds them
-into the python-telegram-bot Application via update_queue.
+In webhook mode, Telegram POSTs updates to https://<your-app>/webhook and this
+handler feeds them into the python-telegram-bot Application via update_queue.
+This avoids long-polling entirely, which is what caused the 409 Conflict on
+Render (multiple workers polling the same token).
 
-Run in a background thread from main().
+Run in a background thread from main(), which also calls set_application(app).
 """
 from __future__ import annotations
 
@@ -48,8 +48,6 @@ class _H(BaseHTTPRequestHandler):
                 if _APP is not None:
                     from telegram import Update
                     try:
-                        # Newer python-telegram-bot: Update is built directly
-                        # from the dict; de_json also works but needs the bot.
                         update = Update.de_json(data, _APP.bot)
                     except Exception:
                         update = Update(data)
@@ -70,8 +68,8 @@ class _H(BaseHTTPRequestHandler):
         pass
 
 
-def start_health_server():
-    port = int(os.environ.get("PORT", "8080"))
+def start_health_server(port=None):
+    port = int(port if port is not None else os.environ.get("PORT", "8080"))
     srv = ThreadingHTTPServer(("0.0.0.0", port), _H)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
