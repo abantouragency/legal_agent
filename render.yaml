@@ -30,6 +30,8 @@ services:
     envVars:
       - key: PORT
         value: "8080"
+      - key: WEB_CONCURRENCY
+        value: "1"
       - key: DATA_DIR
         value: "/tmp/legal_agent"
       - key: BOT_TOKEN
