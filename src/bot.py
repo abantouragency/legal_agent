@@ -119,6 +119,16 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+def doc_type_keyboard() -> InlineKeyboardMarkup:
+    """Inline keyboard to pick a legal document type (step 1 of the draft flow)."""
+    from telegram import InlineKeyboardButton
+    rows = []
+    for dt in DR.DOC_TYPES:
+        rows.append([InlineKeyboardButton(f"📑 {dt}", callback_data=f"doctype:{dt}")])
+    rows.append([InlineKeyboardButton("🔙 بازگشت به منو", callback_data="act:menu")])
+    return InlineKeyboardMarkup(rows)
+
+
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle inline keyboard button presses."""
     q = update.callback_query
@@ -127,10 +137,15 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "act:analyze":
         await q.message.reply_text("✍️ موضوع حقوقی خود را بنویسید؛ من خودم تحلیل می‌کنم.")
     elif data == "act:draft":
-        if AP.has_access(update.effective_user.id, CFG.get("admin_ids")):
-            await q.message.reply_text("📑 نوع سند را بنویسید یا دستور بزنید:\n/draft دادخواست")
-        else:
-            await q.message.reply_text("🔒 صدور سند ویژه کاربران فعال است. اول اشتراک بگیرید (از منوی «💎 اشتراک ویژه»).")
+        if not AP.has_access(update.effective_user.id, CFG.get("admin_ids")):
+            await q.message.reply_text("🔒 صدور سند ویژه کاربران دارای اشتراک فعال است. اول اشتراک بگیر (از منوی «💎 اشتراک ویژه»).")
+            return
+        await q.message.reply_text(
+            "📑 **چه نوع سندی می‌خوای؟**\nیه مورد رو انتخاب کن — بعد ازت چند تا سوال ساده می‌پرسم تا سند رو دقیق برات بنویسم 👇",
+            reply_markup=doc_type_keyboard(),
+        )
+    elif data == "act:menu":
+        await q.message.reply_text("📲 منوی سریع:", reply_markup=main_menu_keyboard())
     elif data == "act:buy":
         await buy(update, context)
     elif data == "act:about":
@@ -143,6 +158,125 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"بفهمی حق قانونی‌ت چیه و قدم بعدی‌ت چیه.\n\n"
             f"سوال حقوقی‌ت رو بپرس — من همین‌جا جواب می‌دم 🌿"
         )
+    elif data.startswith("doctype:"):
+        await _draft_type_chosen(update, context, data[8:])
+
+
+async def _draft_type_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                              doc_type: str):
+    """Step 2 of the draft flow: store the chosen type, then ask for facts."""
+    uid = update.effective_user.id
+    conv = context.chat_data.setdefault("conv", {"issue": "", "doc": "", "history": []})
+    conv["draft_type"] = doc_type
+    conv["draft_step"] = "awaiting_facts"
+
+    # If the user already described a case earlier in this chat, reuse it.
+    prior = (conv.get("issue") or "").strip()
+    if prior:
+        await update.callback_query.message.reply_text(
+            f"✅ نوع سند: **{doc_type}**\n\n"
+            f"موضوع قبلی‌ات رو پیدا کردم — همون رو پایه قرار بدم یا می‌خوای توضیح جدیدی بدی؟\n\n"
+            f"اگه همون اوکیه، فقط بنویس «همون» تا سند رو بنویسم.\n"
+            f"اگه می‌خوای اصلاح کنی، موضوع/طرف مقابل/مبلغ رو اینجا بنویس."
+        )
+    else:
+        await update.callback_query.message.reply_text(
+            f"✅ نوع سند: **{doc_type}**\n\n"
+            f"حالا چند تا نکته رو بگو تا دقیق بنویسم (همه رو یه جا بنویس کافیه):\n"
+            f"• موضوع/واقعه چیه؟\n"
+            f"• طرف مقابل (خوانده/مخاطب) کیه؟\n"
+            f"• چی می‌خوای (مبلغ/درخواست مشخص)؟\n"
+            f"• مدرکی داری؟ (قرارداد، رسید، پیام...)"
+        )
+
+
+async def _draft_facts_received(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                 facts: str):
+    """Step 3: generate the document from the gathered facts + prior case."""
+    uid = update.effective_user.id
+    conv = context.chat_data.setdefault("conv", {"issue": "", "doc": "", "history": []})
+    doc_type = conv.get("draft_type") or DR.classify_doc_type(facts)
+    # Combine prior case issue (if any) with the new facts for richer context.
+    base = (conv.get("issue") or "").strip()
+    issue_text = (base + "\n" + facts).strip() if base else facts
+
+    await update.message.reply_text("📝 در حال تنظیم سند حقوقی...")
+
+    coll = ensure_collection()
+    loop = asyncio.get_event_loop()
+    try:
+        hits = await loop.run_in_executor(None, query_collection, coll, issue_text, 10)
+        draft = await loop.run_in_executor(
+            None, lambda: DR.draft_document(doc_type, issue_text, hits,
+                                            openai_key=CFG.get("openai_key"),
+                                            model=CFG.get("model", "gpt-4o-mini"),
+                                            history=conv.get("history", []))
+        )
+    except Exception as e:
+        err = str(e)
+        if "insufficient_quota" in err or "RateLimitError" in err or "429" in err:
+            await update.message.reply_text("⚠️ حساب OpenAI شارژ نشده یا سقف استفاده تمام شده. شارژ کنید.")
+        else:
+            await update.message.reply_text(f"⚠️ خطا در تنظیم سند: {err[:300]}")
+        return
+
+    # forward to channel with attribution
+    handle = update.effective_user.username or "بدون یوزرنیم"
+    report = (
+        f"📄 سند حقوقی تولید شد\n━━━━━━━━━━━━━━━━\n"
+        f"👤 کاربر: @{handle} | ID: {uid}\n"
+        f"📑 نوع سند: {doc_type}\n━━━━━━━━━━━━━━━━\n{draft}\n\n"
+        f"━━━━━━━━━━━━━━━━\n{brand.ADVISOR_SIGNATURE}"
+    )
+    await post_to_channel(report)
+    AP.incr_analyses(uid)
+
+    # send text + PDF option
+    await update.message.reply_text(draft)
+    context.chat_data["conv"]["draft_last"] = draft
+    context.chat_data["conv"]["draft_step"] = "done"
+
+    # post-draft menu
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📄 دریافت PDF", callback_data="draft:pdf")],
+        [InlineKeyboardButton("✏️ ویرایش / تکمیل", callback_data="draft:edit")],
+        [InlineKeyboardButton("📑 سند دیگه", callback_data="act:draft")],
+        [InlineKeyboardButton("📲 منو", callback_data="act:menu")],
+    ])
+    await update.message.reply_text("گزینه‌های بعدی:", reply_markup=kb)
+
+
+async def draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle post-draft menu (PDF / edit / new)."""
+    q = update.callback_query
+    await q.answer()
+    data = q.data or ""
+    conv = context.chat_data.setdefault("conv", {})
+    if data == "draft:pdf":
+        draft = conv.get("draft_last", "")
+        if not draft:
+            await q.message.reply_text("⚠️ سندی برای PDF ندارم. اول سند رو بساز.")
+            return
+        pdf_path = os.path.join(tempfile.gettempdir(), f"draft_{update.effective_user.id}.pdf")
+        try:
+            if PDF.available():
+                PDF.build_pdf(draft, f"سند حقوقی — {conv.get('draft_type','')}", pdf_path)
+                with open(pdf_path, "rb") as f:
+                    await q.message.reply_document(document=f, filename="سند_حقوقی.pdf",
+                                                    caption="📄 نسخه PDF سند (با فرمت حقوقی).")
+                os.unlink(pdf_path)
+            else:
+                await q.message.reply_text("ℹ️ کتابخانه PDF در دسترس نیست؛ متن سند همون بالاست.")
+        except Exception as e:
+            await q.message.reply_text(f"ℹ️ تولید PDF ناموفق بود ({str(e)[:150]}).")
+    elif data == "draft:edit":
+        await q.message.reply_text(
+            "✏️ بگو چی رو اصلاح/اضافه کنم (مثلاً «مبلغ رو ۵۰ میلیون بنویس» یا «نام طرف رو اضافه کن») "
+            "تا نسخهٔ جدید برات بزنم."
+        )
+        conv["draft_step"] = "editing"
+    # note: "act:draft" (new document) is handled by menu_callback, not here
 
 
 
@@ -168,6 +302,25 @@ async def profile_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         loop = asyncio.get_event_loop()
         hits = await loop.run_in_executor(None, query_collection, coll, st["issue"], 10)
         await _run_analysis(update, context, hits, st.get("history", []))
+        return
+
+    # Mode A2: user is in the document-draft flow -> gather facts / edit
+    draft_step = st.get("draft_step")
+    if draft_step == "awaiting_facts":
+        # "همون" means reuse the prior case issue without new facts
+        if text.strip() == "همون":
+            facts = (st.get("issue") or "").strip()
+        else:
+            facts = text
+        st["draft_step"] = None
+        await _draft_facts_received(update, context, facts)
+        return
+    if draft_step == "editing":
+        # Append the edit instruction to the last draft and regenerate
+        st["draft_step"] = None
+        prior = st.get("draft_last", "")
+        extra = f"\n[ویرایش درخواستی کاربر]: {text}"
+        await _draft_facts_received(update, context, (st.get("issue") or "") + extra)
         return
 
     # Mode B: any other free text is the legal issue -> analyze it
@@ -711,6 +864,8 @@ def main():
     _app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, profile_input))
     _app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^act:"))
     _app.add_handler(CallbackQueryHandler(sub_callback, pattern=r"^sub:"))
+    _app.add_handler(CallbackQueryHandler(draft_callback, pattern=r"^draft:"))
+    _app.add_handler(CallbackQueryHandler(_draft_type_chosen, pattern=r"^doctype:"))
 
     # Global error handler so the bot never silently hangs/crashes on an
     # unhandled exception (e.g. a slow OpenAI call) — the user always gets a
