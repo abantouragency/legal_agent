@@ -575,6 +575,17 @@ def main():
     if not token:
         raise RuntimeError("BOT_TOKEN not set in .env")
 
+    # Clear any competing getUpdates session / stuck webhook so a fresh deploy
+    # does not conflict with a previously running instance. This is the
+    # documented telegram-python-bot recovery for 409 "Conflict" errors.
+    try:
+        from telegram import Bot as _TG_Bot
+        _tg = _TG_Bot(token)
+        _tg.delete_webhook(drop_pending_updates=True)
+        print("🧹 cleared any stale webhook / competing getUpdates session")
+    except Exception as e:
+        print(f"delete_webhook warning (non-fatal): {e}")
+
     # start a tiny health server so PaaS platforms (Render etc.) stay "healthy"
     try:
         import web_health
