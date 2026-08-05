@@ -528,6 +528,22 @@ def ensure_collection():
     if COLLECTION is None:
         import chromadb
         data_dir = os.environ.get("DATA_DIR", os.path.join(PROJECT_ROOT, "data"))
+        # On Render's free plan there is no mounted disk; if the configured
+        # DATA_DIR is not writable (e.g. it points at /data) fall back to a
+        # writable temp dir so the bot does not crash with PermissionError.
+        candidates = [data_dir, "/tmp/legal_agent", os.path.join(PROJECT_ROOT, "data")]
+        for cdir in candidates:
+            try:
+                os.makedirs(cdir, exist_ok=True)
+                # probe writability
+                probe = os.path.join(cdir, ".write_test")
+                with open(probe, "w") as f:
+                    f.write("ok")
+                os.remove(probe)
+                data_dir = cdir
+                break
+            except (PermissionError, OSError):
+                continue
         chroma_path = os.path.join(data_dir, "chroma")
         os.makedirs(chroma_path, exist_ok=True)
         client = chromadb.PersistentClient(path=chroma_path)
@@ -597,7 +613,7 @@ def main():
     _app.add_error_handler(_global_error)
 
     print("🤖 Bot started. Press Ctrl+C to stop.")
-    _app.run_polling()
+    _app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
