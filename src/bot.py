@@ -104,11 +104,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚠️ نکته مهم: پاسخ‌های من «مشاوره حقوقی اولیه» هستند و جایگزین مراجعه حضوری "
         "به وکیل دادگستری و بررسی پرونده اصلی نمی‌شوند.\n\n"
         "🎁 دوره آزمایشی: ۱ تحلیل رایگان. پس از آن برای ادامه /buy را بزنید.\n\n"
-        "برای شروع:\n"
-        "۱. نام و شماره تماس را (اختیاری) بفرستید یا «رد» بنویسید.\n"
-        "۲. موضوع حقوقی خود را مستقیماً بنویسید؛ من خودم ادامه می‌دهم.\n"
-        "۳. اگر سوال تکمیلی پرسیدم، پاسخ دهید.\n"
-        "۴. مستندات (عکس/PDF) را بفرستید (اختیاری).\n\n"
+        "برای دریافت تحلیل:\n"
+        "۱. موضوع حقوقی خود را مستقیماً بنویسید؛ من خودم تحلیل و پرسش تکمیلی می‌کنم.\n"
+        "۲. اگر سوال تکمیلی پرسیدم، پاسخ دهید تا تحلیل کامل را بگیرید.\n"
+        "۳. مستندات (عکس/PDF) را بفرستید (اختیاری).\n\n"
         "🌐 کانال موسسه: @Padid_Avaran_Edalat"
     )
     set_profile(uid, context, consented=True)
@@ -152,7 +151,9 @@ async def profile_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Text handler. Two modes:
        - If awaiting clarification answers (conv['awaiting']), fold the reply
          into the issue and run the analysis.
-       - Else collect name/phone on first interaction, then hand to handle_text.
+       - Otherwise hand the message straight to handle_text (the smart
+         workflow). Name/phone capture was removed so the bot analyzes the
+         user's first message immediately instead of mis-storing it as a name.
     """
     text = update.message.text.strip()
     uid = update.effective_user.id
@@ -170,24 +171,7 @@ async def profile_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _run_analysis(update, context, hits, st.get("history", []))
         return
 
-    # Mode B: initial name/phone capture
-    if text in ("رد", "نمی‌خوام", "skip", "رد شد"):
-        set_profile(uid, context, name="—", phone="—")
-        AP.ensure_user(uid, name="—", phone="—", handle=update.effective_user.username or "—",
-                       admin_ids=CFG.get("admin_ids"))
-        await update.message.reply_text("ثبت شد (بدون نام). موضوع خود را بنویسید.")
-        return
-    prof = get_profile(uid, context)
-    if "name" not in prof or prof.get("name") in (None, "—"):
-        set_profile(uid, context, name=text[:60])
-        AP.ensure_user(uid, name=text[:60], handle=update.effective_user.username or "—",
-                       admin_ids=CFG.get("admin_ids"))
-        await update.message.reply_text("✅ نام ثبت شد. حالا شماره تماس را بفرستید یا «رد» را بنویسید.")
-        return
-    if "phone" not in prof or prof.get("phone") in (None, "—"):
-        set_profile(uid, context, phone=text[:20])
-        await update.message.reply_text("✅ مشخصات ثبت شد. موضوع حقوقی خود را بنویسید.")
-        return
+    # Mode B: any other free text is the legal issue -> analyze it
     await handle_text(update, context)
 
 
