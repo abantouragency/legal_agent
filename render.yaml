@@ -9,14 +9,18 @@
 #   ADMIN_IDS            67391189,125472442  (comma-separated Telegram user ids)
 #   MODEL                gpt-4o-mini (optional)
 #
-# The chroma vector DB persists at /data/chroma (a Render disk), so embedded
-# articles survive restarts.
+# NOTE ON PERSISTENCE (free tier):
+#   Render's free web service does NOT support mounted disks and spins down
+#   after 15 min idle. Without a disk, chroma rebuilds from the seed jsonl on
+#   each start (costs a small amount of OpenAI embedding quota, but works).
+#   For a true 24/7 always-on bot with a persisted vector DB, use the paid
+#   "Starter" plan and uncomment the `disks:` block below (and set DATA_DIR).
 services:
   - type: web
     name: legal-agent
     runtime: python
     plan: free
-    region: frankfurt  # closest EU region; adjust as needed
+    region: frankfurt  # use oregon if frankfurt is unavailable on free tier
     pythonVersion: "3.11"
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python -m src.bot"
@@ -24,6 +28,8 @@ services:
     envVars:
       - key: PORT
         value: "8080"
+      - key: DATA_DIR
+        value: "/data"   # ignored on free (no disk); harmless
       - key: BOT_TOKEN
         sync: false   # set these manually in the dashboard
       - key: OPENAI_API_KEY
@@ -34,7 +40,8 @@ services:
         sync: false
       - key: MODEL
         value: gpt-4o-mini
-    disks:
-      - name: chroma-data
-        mountPath: /data
-        sizeGB: 1
+    # --- UNCOMMENT FOR PAID PLAN (persistent vector DB) ---
+    # disks:
+    #   - name: chroma-data
+    #     mountPath: /data
+    #     sizeGB: 1
