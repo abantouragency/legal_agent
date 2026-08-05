@@ -15,23 +15,26 @@
 #   each start (costs a small amount of OpenAI embedding quota, but works).
 #   For a true 24/7 always-on bot with a persisted vector DB, use the paid
 #   "Starter" plan and uncomment the `disks:` block below (and set DATA_DIR).
+#
+# REGION: on the FREE plan only `oregon` is available. frankfurt/singapore are
+# paid-only and will cause a blueprint validation error.
 services:
   - type: web
     name: legal-agent
     runtime: python
     plan: free
-    region: frankfurt  # use oregon if frankfurt is unavailable on free tier
+    region: oregon
     pythonVersion: "3.11"
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "python -m src.bot"
+    startCommand: "python run.py"
     healthCheckPath: /healthz
     envVars:
       - key: PORT
         value: "8080"
       - key: DATA_DIR
-        value: "/data"   # ignored on free (no disk); harmless
+        value: "/data"
       - key: BOT_TOKEN
-        sync: false   # set these manually in the dashboard
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: CHANNEL_ID

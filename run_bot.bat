@@ -17,6 +17,6 @@ echo [3/4] نصب پکیج‌های OCR (برای عکس/PDF اسکن‌شده).
 uv add easyocr pymupdf
 
 echo [4/4] اجرای ربات...
-python -m src.bot
+python run.py
 
 pause
