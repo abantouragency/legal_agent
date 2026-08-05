@@ -44,9 +44,10 @@ def _iter_jsonl_files() -> list[str]:
 def load_records() -> list[dict]:
     """Read every JSONL source into a flat list of dict records."""
     records: list[dict] = []
+    _counter = {"n": 0}  # global counter -> guarantees unique doc_id across files
     for path in _iter_jsonl_files():
         with open(path, "r", encoding="utf-8") as fh:
-            for line in fh:
+            for line_no, line in enumerate(fh, start=1):
                 line = line.strip()
                 if not line:
                     continue
@@ -56,7 +57,11 @@ def load_records() -> list[dict]:
                     continue
                 if "text" not in rec:
                     continue
-                rec.setdefault("doc_id", os.path.basename(path) + ":" + str(len(records)))
+                # ALWAYS assign a unique, stable id (filename#line). Do NOT trust
+                # any pre-existing doc_id in the data — we saw duplicate doc_ids
+                # in the seed files causing chromadb DuplicateIDError (the bot then
+                # failed to build its collection on a cold Render start).
+                rec["doc_id"] = f"{os.path.basename(path)}#{line_no}"
                 rec.setdefault("law", "نامشخص")
                 rec.setdefault("title", "")
                 rec.setdefault("article", "")
