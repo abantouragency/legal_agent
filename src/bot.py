@@ -562,17 +562,25 @@ def ensure_collection():
 
 
 def _acquire_single_instance_lock():
-    """Prevent two bot processes (e.g. two Render workers or a redeploy that
-    overlaps the old instance) from polling the same Telegram token at once,
-    which causes 409 Conflict. Uses a lock file; the OS releases it if the
-    process dies, so it cannot deadlock across restarts."""
-    import fcntl
-    lock_path = os.path.join(tempfile.gettempdir(), "legal_agent_bot.lock")
+    """Prevent two bot processes (e.g. two Render workers or an overlapping
+    redeploy) from polling the same Telegram token at once, which causes 409
+    Conflict. Uses an OS-level advisory file lock that is automatically
+    released if the process dies, so it cannot deadlock across restarts.
+    Cross-platform: fcntl on Linux/macOS, msvcrt on Windows.
+    """
+    import tempfile as _tf
+    lock_path = os.path.join(_tf.gettempdir(), "legal_agent_bot.lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
     try:
-        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return fd  # keep the fd open for the process lifetime
     except OSError:
+        os.close(fd)
         print("⛔ Another instance of the bot is already running (lock held). "
               "Exiting to avoid Telegram 409 Conflict.")
         sys.exit(0)
