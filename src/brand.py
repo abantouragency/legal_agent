@@ -22,15 +22,24 @@ FIRM_NAME = "موسسه حقوقی پدیدآوران عدالت"
 FIRM_FOUNDED = "۱۳۹۳/۰۴/۱۵"
 ADVISOR_NAME = "حجت فایقی"
 ADVISOR_TITLE = "وکیل پایه یک دادگستری و رئیس هیئت مدیره " + FIRM_NAME
+ADVISOR_PHONE = "09120849437"  # تماس مستقیم با مشاور جهت معرفی به وکیل / مشاوره تلفنی
 ADVISOR_SIGNATURE = (
     f"⚖️ {ADVISOR_NAME} — {ADVISOR_TITLE}\n"
-    f"🏛 {FIRM_NAME} (تأسیس {FIRM_FOUNDED})"
+    f"🏛 {FIRM_NAME} (تأسیس {FIRM_FOUNDED})\n"
+    f"📞 تماس: {ADVISOR_PHONE}"
 )
 # Short signature used inside analysis posts / channel reports.
 ADVISOR_SHORT = f"{ADVISOR_NAME} | {FIRM_NAME}"
 
 # Daily free allowance for the free tier (item 5): 3 questions/day.
 FREE_DAILY_LIMIT = 3
+
+# Exact liability disclaimer (item 5.4) — used to overwrite the model's version
+# so the wording is always consistent and on-message.
+DISCLAIMER_TEXT = (
+    "این مشاوره صرفاً جنبه اطلاعاتی داره و به هیچ عنوان جایگزین مشاوره حقوقی "
+    "تخصصی نیست. برای اقدامات قانونی، حتماً با وکلای موسسه ما مشورت کن."
+)
 
 # Subscription tiers (item 6). Each tier = months of access + a suggested price
 # (toman). Owner can adjust prices; these are recommendations.

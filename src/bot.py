@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import tempfile
 from typing import Optional
@@ -91,15 +92,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"سلام دوست من 🌿 خوش اومدی.\n\n"
-        f"من اینجام که بارِ حقوقی‌ات رو سبک کنم — بدون قضاوت، بدون پیچیدگی. "
-        f"هر چی تو ذهنت هست (اجاره، طلاق، قرارداد، شکایت، ارث، کار...) راحت بگو؛ "
+        f"من اینجام که **بارِ حقوقی‌ات** رو سبک کنم — بدون قضاوت، بدون پیچیدگی. "
+        f"هر چی تو ذهنت هست (**اجاره**، **طلاق**، **قرارداد**، **شکایت**، **ارث**، **کار** و...) راحت بگو؛ "
         f"من می‌فهمم و راهش رو می‌گم.\n\n"
-        f"یه نکته صادقانه: من یه «دستیار هوشمند» هستم که زیر نظر یه تیم حقوقی "
-        f"حرفه‌ای و باتجربه کار می‌کنم — نه یه رباتِ بی‌طرفِ خشک. "
-        f"پشت این بات، {brand.FIRM_NAME} نشسته که از سال {brand.FIRM_FOUNDED} "
-        f"(بیش از یه دهه) داره به مردم و کسب‌وکارها خدمت حقوقی می‌ده و سابقهٔ "
-        f"طولانی‌مدتش در کیس‌های مختلف، تضمینیه برای اینکه جواب‌هایی که می‌گیری "
-        f"ریشه در تجربهٔ واقعی دارن، نه فقط یه متن عمومی.\n\n"
+        f"یه نکته صادقانه: من زیر نظر یه تیم حقوقی واقعی کار می‌کنم. "
+        f"پشت من چندین **وکیل پایه یک دادگستری** و {brand.FIRM_NAME} که در تاریخ "
+        f"{brand.FIRM_FOUNDED} تأسیس شده نشسته.\n\n"
         f"بزن بریم؟ اولین موضوعت رو بنویس، یا از منوی پایین انتخاب کن 👇"
     )
     set_profile(uid, context, consented=True)
@@ -154,7 +152,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "act:about":
         await q.message.reply_text(
             f"👤 **درباره مشاور و موسسه**\n\n"
-            f"⚖️ {brand.ADVISOR_NAME} — {brand.ADVISOR_TITLE}\n\n"
+            f"⚖️ {brand.ADVISOR_NAME} — {brand.ADVISOR_TITLE}\n"
+            f"📞 تماس مستقیم: {brand.ADVISOR_PHONE} (معرفی به وکیل / اخذ مشاوره تلفنی)\n\n"
             f"🏛 {brand.FIRM_NAME}\n📅 تأسیس: {brand.FIRM_FOUNDED}\n\n"
             f"ما یه موسسه حقوقی با‌سابقه هستیم که از سال ۹۳ داره به مردم عادی و کسب‌وکارها "
             f"خدمت می‌کنه. این بات، راه سریعیه برای اینکه بدون هزینه‌ی اولیه و بدون معطلی، "
@@ -335,6 +334,33 @@ async def profile_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _draft_facts_received(update, context, (st.get("issue") or "") + extra)
         return
 
+    # Mode A3: user is filling the subscription-buyer info form (item 7)
+    if st.get("awaiting_buyer_info"):
+        st["awaiting_buyer_info"] = False
+        parts = [p.strip() for p in text.split("|")]
+        # pad to 4 fields; national_id optional (defaults to "-")
+        while len(parts) < 4:
+            parts.append("-")
+        full_name, last_name, mobile, national_id = parts[0], parts[1], parts[2], parts[3]
+        AP.save_buyer_info(uid, full_name=full_name, last_name=last_name,
+                           mobile=mobile, national_id=(national_id if national_id not in ("-", "") else ""))
+        tier_id = st.get("pending_tier")
+        tier = brand.tier_by_id(tier_id) if tier_id else None
+        card = os.environ.get("BANK_CARD_NUMBER", "—— (کارت بانکی توسط ادمین ست می‌شود) ——")
+        card_holder = os.environ.get("BANK_CARD_HOLDER", "موسسه حقوقی پدیدآوران عدالت")
+        tier_label = tier["label"] if tier else "اشتراک"
+        tier_months = tier["months"] if tier else 1
+        await update.message.reply_text(
+            f"✅ مشخصاتت ثبت شد. حالا برو پرداخت:\n\n"
+            f"۱. مبلغ **{tier['price']:,} تومان** رو به کارت زیر واریز کن:\n"
+            f"`{card}`\n👤 به نام: {card_holder}\n\n"
+            f"۲. **عکس رسید رو دقیقاً همین‌جا (توی این چت) بفرست** — من هوشمندانه چک می‌کنم "
+            f"و اگه مبلغ درست باشه، اشتراک {tier_label} ({tier_months} ماه) رو خودکار "
+            f"برات فعال می‌کنم 🤖✨\n\n"
+            f"اگه عکس کار نکرد، به @rezapilot پیام بده تا دستی فعال کنه."
+        )
+        return
+
     # Mode B: any other free text is the legal issue -> analyze it
     await handle_text(update, context)
 
@@ -500,23 +526,30 @@ async def _handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if AP.has_access(uid, CFG.get("admin_ids")):
-        await update.message.reply_text("✅ شما در حال حاضر اشتراک فعال دارید.")
-        return
+    try:
+        if AP.has_access(uid, CFG.get("admin_ids")):
+            await update.message.reply_text("✅ شما در حال حاضر اشتراک فعال دارید.")
+            return
 
-    card = os.environ.get("BANK_CARD_NUMBER", "—— (کارت بانکی توسط ادمین ست می‌شود) ——")
-    card_holder = os.environ.get("BANK_CARD_HOLDER", "موسسه حقوقی پدیدآوران عدالت")
-    await update.message.reply_text(
-        "💎 **اشتراک ویژه — تحلیل نامحدود + صدور اسناد**\n\n"
-        "با اشتراک، بی‌نهایت تحلیل حقوقی + تنظیم سند (دادخواست/لایحه/قرارداد) داری.\n"
-        "۳ سطح دسترسی داریم — هر چی طولانی‌تر، به‌صرفه‌تر 👇\n\n"
-        "💡 پیشنهاد من: اشتراک ۶ ماهه! چون قیمتش از ۲ تا ۳ ماهه منصفانه‌تره و "
-        "برای پرونده‌هایی که زمان می‌برن (مثل طلاق یا مطالبه طولانی) کاملاً می‌ارزه.\n\n"
-        f"🏦 **واریز به کارت:**\n`{card}`\n👤 به نام: {card_holder}\n\n"
-        "بعد از انتخاب سطح و کارت‌به‌کارت، **عکس رسید رو همین‌جا بفرست** — من "
-        "هوشمندانه چک می‌کنم و اشتراکت رو خودکار فعال می‌کنم 🤖✨",
-        reply_markup=brand.subscription_menu_keyboard(),
-    )
+        card = os.environ.get("BANK_CARD_NUMBER", "—— (کارت بانکی توسط ادمین ست می‌شود) ——")
+        card_holder = os.environ.get("BANK_CARD_HOLDER", "موسسه حقوقی پدیدآوران عدالت")
+        await update.message.reply_text(
+            "💎 **اشتراک ویژه — تحلیل نامحدود + صدور اسناد**\n\n"
+            "با اشتراک، بی‌نهایت تحلیل حقوقی + تنظیم سند (دادخواست/لایحه/قرارداد) داری.\n"
+            "۳ سطح دسترسی داریم — هر چی طولانی‌تر، به‌صرفه‌تر 👇\n\n"
+            "💡 پیشنهاد من: اشتراک ۶ ماهه! چون قیمتش از ۲ تا ۳ ماهه منصفانه‌تره و "
+            "برای پرونده‌هایی که زمان می‌برن (مثل طلاق یا مطالبه طولانی) کاملاً می‌ارزه.\n\n"
+            f"🏦 **واریز به کارت:**\n`{card}`\n👤 به نام: {card_holder}\n\n"
+            "بعد از انتخاب سطح و کارت‌به‌کارت، **عکس رسید رو همین‌جا بفرست** — من "
+            "هوشمندانه چک می‌کنم و اشتراکت رو خودکار فعال می‌کنم 🤖✨",
+            reply_markup=brand.subscription_menu_keyboard(),
+        )
+    except Exception as e:
+        print(f"[buy error] {e}")
+        await update.message.reply_text(
+            "⚠️ در باز کردن بخش اشتراک خطایی رخ داد. لطفاً چند لحظه بعد دوباره /buy را بزنید "
+            "یا به @rezapilot پیام دهید."
+        )
 
 
 async def sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -531,15 +564,18 @@ async def sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Flag pending purchase with the chosen tier so admin can activate + track.
     AP.request_purchase(uid, tier_id=tier["id"], months=tier["months"])
     # Remember the chosen tier in chat_data so the next receipt photo is verified.
-    context.chat_data.setdefault("conv", {})["pending_tier"] = tier["id"]
+    conv = context.chat_data.setdefault("conv", {})
+    conv["pending_tier"] = tier["id"]
+    # Now ask for the buyer's identity (item 7) before taking the receipt.
+    conv["awaiting_buyer_info"] = True
     card = os.environ.get("BANK_CARD_NUMBER", "—— (کارت بانکی توسط ادمین ست می‌شود) ——")
     await q.message.reply_text(
-        f"🛒 **اشتراک {tier['label']} — {tier['price']:,} تومان** ثبت شد.\n\n"
-        f"۱. مبلغ را به همین کارت واریز کن:\n`{card}`\n\n"
-        f"۲. **عکس رسید رو دقیقاً همین‌جا (توی این چت) بفرست** — من هوشمندانه چک می‌کنم "
-        f"و اگه مبلغ درست باشه، اشتراک {tier['label']} ({tier['months']} ماه) رو خودکار "
-        f"برات فعال می‌کنم 🤖✨\n\n"
-        f"اگه عکس کار نکرد، به @rezapilot پیام بده تا دستی فعال کنه."
+        f"🛒 **اشتراک {tier['label']} — {tier['price']:,} تومان** انتخاب شد.\n\n"
+        f"برای ثبت اشتراک و صدور فاکتور، لطفاً مشخصات خودت رو به این فرمت بفرست:\n\n"
+        f"`نام | نام‌خانوادگی | شماره موبایل | کد ملی`\n\n"
+        f"مثال:\n`علی | رضایی | 09123456789 | 0012345678`\n\n"
+        f"(کد ملی اختیاریه — اگه نمی‌خوای بفرستی، خط تیره بزن: `علی | رضایی | 09123456789 | -`)\n\n"
+        f"بعدش راهنمای پرداخت و ارسال رسید رو برات می‌فرستم 🤖✨"
     )
 
 
@@ -589,12 +625,14 @@ async def _run_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     # private summary (truncated) + full report in channel
     summary = opinion.raw if len(opinion.raw) <= 4000 else opinion.raw[:4000] + "\n...(ادامه در کانال)"
-    # prepend the advisor identity header so every analysis carries the brand (item 1)
+    # prepend the firm identity header (item 1 + 5.1: keep FIRM, drop advisor name)
     header = (
-        f"⚖️ {brand.ADVISOR_NAME} | {brand.FIRM_NAME}\n"
+        f"⚖️ {brand.FIRM_NAME} | تأسیس {brand.FIRM_FOUNDED}\n"
         f"━━━━━━━━━━━━━━━━\n\n"
     )
-    await update.message.reply_text(header + summary)
+    # Force the exact liability disclaimer (item 5.4) instead of the model's wording.
+    final_text = _replace_disclaimer(summary, brand.DISCLAIMER_TEXT)
+    await update.message.reply_text(header + final_text)
 
     # channel report with user info + advisor attribution
     prof = get_profile(uid, context)
@@ -627,6 +665,21 @@ async def _run_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE,
     context.chat_data["conv"] = {"issue": "", "doc": "", "history": [], "awaiting": False}
     # show the smart menu again
     await update.message.reply_text("📲 منوی سریع:", reply_markup=main_menu_keyboard())
+
+
+_DISCLAIMER_RE = re.compile(
+    r"⚠️\s*هشدار مسئولیت.*$",
+    re.DOTALL | re.MULTILINE,
+)
+
+
+def _replace_disclaimer(text: str, disclaimer: str) -> str:
+    """Strip any model-generated '⚠️ هشدار مسئولیت' block and append the exact,
+    on-message disclaimer (item 5.4). Keeps output wording consistent."""
+    cleaned = _DISCLAIMER_RE.sub("", text).strip()
+    if cleaned.endswith("━━━━━━━━━━━━━━━━"):
+        cleaned = cleaned[: -len("━━━━━━━━━━━━━━━━")].strip()
+    return cleaned + "\n\n⚠️ " + disclaimer
 
 
 # --------------------------------------------------------------------------
@@ -692,6 +745,50 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await post_to_channel(f"📢 اطلاعیه:\n{text}")
     await update.message.reply_text("✅ اطلاعیه در کانال منتشر شد.")
+
+
+async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: export the subscription-buyers list as Excel (CSV) + PDF."""
+    if not is_admin(update.effective_user.id):
+        return
+    await update.message.reply_text("⏳ در حال تهیه گزارش خریداران...")
+    buyers = AP.list_buyers()
+    if not buyers:
+        await update.message.reply_text("هنوز هیچ درخواست خریدی ثبت نشده.")
+        return
+
+    # Excel (CSV with BOM so Persian opens correctly in Excel)
+    import csv
+    csv_path = os.path.join(tempfile.gettempdir(), "buyers_export.csv")
+    try:
+        with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["ردیف", "یوزرنیم", "آیدی", "نام", "نام خانوادگی", "موبایل",
+                         "کد ملی", "وضعیت", "تیر", "تاریخ پرداخت", "اعتبار تا"])
+            for i, b in enumerate(buyers, 1):
+                w.writerow([i, b["handle"], b["user_id"], b["full_name"], b["last_name"],
+                            b["mobile"], b["national_id"], b["access"], b["tier"],
+                            b["paid_at"] or "—", b["paid_until"] or "—"])
+        with open(csv_path, "rb") as f:
+            await update.message.reply_document(document=f, filename="گزارش_خریداران.csv",
+                                                caption="📊 خروجی اکسل (CSV) لیست خریداران اشتراک")
+        os.unlink(csv_path)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ تولید اکسل ناموفق: {str(e)[:150]}")
+
+    # PDF
+    pdf_path = os.path.join(tempfile.gettempdir(), "buyers_export.pdf")
+    try:
+        if PDF.available():
+            PDF.build_pdf(AP.export_buyers_text(), "گزارش خریداران اشتراک", pdf_path)
+            with open(pdf_path, "rb") as f:
+                await update.message.reply_document(document=f, filename="گزارش_خریداران.pdf",
+                                                    caption="📄 خروجی PDF لیست خریداران اشتراک")
+            os.unlink(pdf_path)
+        else:
+            await update.message.reply_text(AP.export_buyers_text())
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ تولید PDF ناموفق: {str(e)[:150]}")
 
 
 async def draft_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -876,6 +973,7 @@ def main():
     _app.add_handler(CommandHandler("approve", approve_cmd))
     _app.add_handler(CommandHandler("revoke", revoke_cmd))
     _app.add_handler(CommandHandler("broadcast", broadcast_cmd))
+    _app.add_handler(CommandHandler("export", export_cmd))
     _app.add_handler(CommandHandler("draft", draft_cmd))
     _app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     _app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, profile_input))

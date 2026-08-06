@@ -227,6 +227,62 @@ def stats() -> dict:
     }
 
 
+def save_buyer_info(user_id: int, full_name: str = "", last_name: str = "",
+                    mobile: str = "", national_id: str = "") -> bool:
+    """Store the buyer's identity collected at subscription time (item 7).
+    national_id is optional. Returns True if saved."""
+    store = _load()
+    u = store["users"].get(str(user_id))
+    if not u:
+        return False
+    u["buyer"] = {
+        "full_name": full_name or u.get("name", "—"),
+        "last_name": last_name or "—",
+        "mobile": mobile or u.get("phone", "—"),
+        "national_id": national_id or "—",
+        "saved_at": str(date.today()),
+    }
+    _save(store)
+    return True
+
+
+def list_buyers() -> list[dict]:
+    """All users who have requested/paid a subscription, with their buyer info."""
+    store = _load()
+    out = []
+    for uid, u in store["users"].items():
+        if u.get("purchase_pending") or u["access"] in ("paid", "admin"):
+            b = u.get("buyer", {})
+            out.append({
+                "user_id": int(uid),
+                "handle": u.get("handle", "—"),
+                "full_name": b.get("full_name", "—"),
+                "last_name": b.get("last_name", "—"),
+                "mobile": b.get("mobile", "—"),
+                "national_id": b.get("national_id", "—"),
+                "access": u["access"],
+                "tier": u.get("purchase_tier") or ("paid" if u["access"] == "paid" else "—"),
+                "paid_at": u.get("paid_at"),
+                "paid_until": u.get("paid_until"),
+            })
+    return out
+
+
+def export_buyers_text() -> str:
+    """Plain-text table of buyers for quick admin view / PDF body."""
+    buyers = list_buyers()
+    if not buyers:
+        return "هنوز هیچ درخواست خریدی ثبت نشده."
+    lines = ["📋 گزارش خریداران اشتراک", "━━━━━━━━━━━━━━━━", ""]
+    for i, b in enumerate(buyers, 1):
+        lines.append(f"{i}. @{b['handle']} | ID: {b['user_id']}")
+        lines.append(f"   نام: {b['full_name']} {b['last_name']}")
+        lines.append(f"   موبایل: {b['mobile']} | کدملی: {b['national_id']}")
+        lines.append(f"   وضعیت: {b['access']} | تیر: {b['tier']} | تا: {b['paid_until']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def render_dashboard(admin_ids: Optional[list[int]] = None) -> str:
     s = stats()
     pending = list_pending()
@@ -246,5 +302,5 @@ def render_dashboard(admin_ids: Optional[list[int]] = None) -> str:
             lines.append(f"  • ID {p['user_id']} | @{p.get('handle','-')} | {p.get('name','-')}")
         lines.append("\nبرای تایید: /approve <ID>")
     else:
-        lines.append("\n✨ در حال حاضراحت درخواست خرید جدیدی نیست.")
+        lines.append("\n✨ در حال حاضر درخواست خرید جدیدی نیست.")
     return "\n".join(lines)
