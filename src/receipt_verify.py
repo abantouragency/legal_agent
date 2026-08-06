@@ -16,6 +16,7 @@ import base64
 import json
 import os
 import re
+from typing import Optional
 
 
 def _encode_image(path: str) -> str:
@@ -24,7 +25,8 @@ def _encode_image(path: str) -> str:
 
 
 def verify_receipt_image(image_path: str, expected_amount_toman: int,
-                         openai_key: str, model: str = "gpt-4o-mini") -> dict:
+                         openai_key: Optional[str] = None,
+                         model: str = "gpt-4o-mini") -> dict:
     """Send the receipt image to OpenAI vision; return a verdict dict.
 
     Returns:
@@ -32,7 +34,14 @@ def verify_receipt_image(image_path: str, expected_amount_toman: int,
          "confidence": str, "reason": str}
     ok=True only when amount is found, confidence is not low, and amount is
     within ±8% of expected_amount_toman.
+
+    If openai_key is missing (not configured), returns ok=False with a clear
+    reason instead of raising — so the bot can fall back to admin review.
     """
+    if not openai_key:
+        return {"ok": False, "amount": None, "date": None,
+                "confidence": "low",
+                "reason": "OPENAI_API_KEY ست نشده — تصدیق خودکار ممکن نیست؛ رسید برای ادمین فرستاده شد."}
     from openai import OpenAI
     client = OpenAI(api_key=openai_key, timeout=60, max_retries=2)
 

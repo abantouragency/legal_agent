@@ -94,9 +94,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"من اینجام که بارِ حقوقی‌ات رو سبک کنم — بدون قضاوت، بدون پیچیدگی. "
         f"هر چی تو ذهنت هست (اجاره، طلاق، قرارداد، شکایت، ارث، کار...) راحت بگو؛ "
         f"من می‌فهمم و راهش رو می‌گم.\n\n"
-        f"یه نکته صادقانه: من یه «دستیار هوشمند» هستم که زیر نظر یه تیم حقوقی واقعی کار می‌کنم. "
-        f"پشت این بات، {brand.ADVISOR_NAME} ({brand.ADVISOR_TITLE}) نشسته — "
-        f"هم‌بنیان‌گذار و رئیس هیئت مدیره {brand.FIRM_NAME} (تأسیس {brand.FIRM_FOUNDED}).\n\n"
+        f"یه نکته صادقانه: من یه «دستیار هوشمند» هستم که زیر نظر یه تیم حقوقی "
+        f"حرفه‌ای و باتجربه کار می‌کنم — نه یه رباتِ بی‌طرفِ خشک. "
+        f"پشت این بات، {brand.FIRM_NAME} نشسته که از سال {brand.FIRM_FOUNDED} "
+        f"(بیش از یه دهه) داره به مردم و کسب‌وکارها خدمت حقوقی می‌ده و سابقهٔ "
+        f"طولانی‌مدتش در کیس‌های مختلف، تضمینیه برای اینکه جواب‌هایی که می‌گیری "
+        f"ریشه در تجربهٔ واقعی دارن، نه فقط یه متن عمومی.\n\n"
         f"بزن بریم؟ اولین موضوعت رو بنویس، یا از منوی پایین انتخاب کن 👇"
     )
     set_profile(uid, context, consented=True)
@@ -529,11 +532,14 @@ async def sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     AP.request_purchase(uid, tier_id=tier["id"], months=tier["months"])
     # Remember the chosen tier in chat_data so the next receipt photo is verified.
     context.chat_data.setdefault("conv", {})["pending_tier"] = tier["id"]
+    card = os.environ.get("BANK_CARD_NUMBER", "—— (کارت بانکی توسط ادمین ست می‌شود) ——")
     await q.message.reply_text(
         f"🛒 **اشتراک {tier['label']} — {tier['price']:,} تومان** ثبت شد.\n\n"
-        f"لطفاً مبلغ را به کارت یا آیدی ادمین @rezapilot واریز کن و رسید + آیدی تلگرامت "
-        f"(از @userinfobot) رو براش بفرست. پس از تایید، اشتراک {tier['label']} "
-        f"برایت فعال می‌شه و تا {tier['months']} ماه دسترسی کامل داری 💎"
+        f"۱. مبلغ را به همین کارت واریز کن:\n`{card}`\n\n"
+        f"۲. **عکس رسید رو دقیقاً همین‌جا (توی این چت) بفرست** — من هوشمندانه چک می‌کنم "
+        f"و اگه مبلغ درست باشه، اشتراک {tier['label']} ({tier['months']} ماه) رو خودکار "
+        f"برات فعال می‌کنم 🤖✨\n\n"
+        f"اگه عکس کار نکرد، به @rezapilot پیام بده تا دستی فعال کنه."
     )
 
 
