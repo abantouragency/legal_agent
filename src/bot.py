@@ -92,13 +92,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"سلام دوست من 🌿 خوش اومدی.\n\n"
-        f"من اینجام که **بارِ حقوقی‌ات** رو سبک کنم — بدون قضاوت، بدون پیچیدگی. "
-        f"هر چی تو ذهنت هست (**اجاره**، **طلاق**، **قرارداد**، **شکایت**، **ارث**، **کار** و...) راحت بگو؛ "
+        f"من اینجام که *بارِ حقوقی‌ات* رو سبک کنم — بدون قضاوت، بدون پیچیدگی. "
+        f"هر چی تو ذهنت هست (*اجاره*، *طلاق*، *قرارداد*، *شکایت*، *ارث*، *کار* و...) راحت بگو؛ "
         f"من می‌فهمم و راهش رو می‌گم.\n\n"
         f"یه نکته صادقانه: من زیر نظر یه تیم حقوقی واقعی کار می‌کنم. "
-        f"پشت من چندین **وکیل پایه یک دادگستری** و {brand.FIRM_NAME} که در تاریخ "
+        f"پشت من چندین *وکیل پایه یک دادگستری* و {brand.FIRM_NAME} که در تاریخ "
         f"{brand.FIRM_FOUNDED} تأسیس شده نشسته.\n\n"
-        f"بزن بریم؟ اولین موضوعت رو بنویس، یا از منوی پایین انتخاب کن 👇"
+        f"بزن بریم؟ اولین موضوعت رو بنویس، یا از منوی پایین انتخاب کن 👇",
+        parse_mode="Markdown",
     )
     set_profile(uid, context, consented=True)
 
@@ -526,30 +527,35 @@ async def _handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    msg = update.effective_message  # works for both Message and CallbackQuery updates
     try:
         if AP.has_access(uid, CFG.get("admin_ids")):
-            await update.message.reply_text("✅ شما در حال حاضر اشتراک فعال دارید.")
+            await msg.reply_text("✅ شما در حال حاضر اشتراک فعال دارید.")
             return
 
         card = os.environ.get("BANK_CARD_NUMBER", "—— (کارت بانکی توسط ادمین ست می‌شود) ——")
         card_holder = os.environ.get("BANK_CARD_HOLDER", "موسسه حقوقی پدیدآوران عدالت")
-        await update.message.reply_text(
-            "💎 **اشتراک ویژه — تحلیل نامحدود + صدور اسناد**\n\n"
+        await msg.reply_text(
+            "💎 *اشتراک ویژه — تحلیل نامحدود + صدور اسناد*\n\n"
             "با اشتراک، بی‌نهایت تحلیل حقوقی + تنظیم سند (دادخواست/لایحه/قرارداد) داری.\n"
             "۳ سطح دسترسی داریم — هر چی طولانی‌تر، به‌صرفه‌تر 👇\n\n"
             "💡 پیشنهاد من: اشتراک ۶ ماهه! چون قیمتش از ۲ تا ۳ ماهه منصفانه‌تره و "
             "برای پرونده‌هایی که زمان می‌برن (مثل طلاق یا مطالبه طولانی) کاملاً می‌ارزه.\n\n"
-            f"🏦 **واریز به کارت:**\n`{card}`\n👤 به نام: {card_holder}\n\n"
-            "بعد از انتخاب سطح و کارت‌به‌کارت، **عکس رسید رو همین‌جا بفرست** — من "
+            f"🏦 *واریز به کارت:*\n`{card}`\n👤 به نام: {card_holder}\n\n"
+            "بعد از انتخاب سطح و کارت‌به‌کارت، *عکس رسید رو همین‌جا بفرست* — من "
             "هوشمندانه چک می‌کنم و اشتراکت رو خودکار فعال می‌کنم 🤖✨",
             reply_markup=brand.subscription_menu_keyboard(),
+            parse_mode="Markdown",
         )
     except Exception as e:
         print(f"[buy error] {e}")
-        await update.message.reply_text(
-            "⚠️ در باز کردن بخش اشتراک خطایی رخ داد. لطفاً چند لحظه بعد دوباره /buy را بزنید "
-            "یا به @rezapilot پیام دهید."
-        )
+        try:
+            await msg.reply_text(
+                "⚠️ در باز کردن بخش اشتراک خطایی رخ داد. لطفاً چند لحظه بعد دوباره /buy را بزنید "
+                "یا به @rezapilot پیام دهید."
+            )
+        except Exception:
+            pass
 
 
 async def sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -632,7 +638,9 @@ async def _run_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE,
     )
     # Force the exact liability disclaimer (item 5.4) instead of the model's wording.
     final_text = _replace_disclaimer(summary, brand.DISCLAIMER_TEXT)
-    await update.message.reply_text(header + final_text)
+    # Telegram Markdown uses single * for bold; convert model's ** to *.
+    final_text = final_text.replace("**", "*")
+    await update.effective_message.reply_text(header + final_text, parse_mode="Markdown")
 
     # channel report with user info + advisor attribution
     prof = get_profile(uid, context)
@@ -748,10 +756,13 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: export the subscription-buyers list as Excel (CSV) + PDF."""
+    """Admin-only: export the subscription-buyers list as Excel (CSV) + PDF."""
     if not is_admin(update.effective_user.id):
         return
-    await update.message.reply_text("⏳ در حال تهیه گزارش خریداران...")
+    await update.effective_message.reply_text(
+        "⏳ در حال تهیه گزارش خریداران...\n"
+        "🔒 این پنل فقط برای ادمین فعاله. برای پشتیبانی: https://t.me/legal_agent_support"
+    )
     buyers = AP.list_buyers()
     if not buyers:
         await update.message.reply_text("هنوز هیچ درخواست خریدی ثبت نشده.")
