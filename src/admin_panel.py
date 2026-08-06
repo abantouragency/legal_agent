@@ -132,6 +132,15 @@ def trial_remaining(user_id: int) -> int:
     return max(0, FREE_DAILY_LIMIT - u.get("trial_count", 0))
 
 
+def is_paid(user_id: int) -> bool:
+    """True if the user is on a paid (or admin) plan (unlimited)."""
+    store = _load()
+    u = store["users"].get(str(user_id))
+    if not u:
+        return False
+    return u["access"] in ("paid", "admin")
+
+
 def incr_analyses(user_id: int):
     store = _load()
     u = store["users"].get(str(user_id))

@@ -162,6 +162,15 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _draft_type_chosen(update, context, data[8:])
 
 
+async def _doctype_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Wrapper so PTB's CallbackQueryHandler (which passes only update/context)
+    can forward the chosen doc type to _draft_type_chosen."""
+    q = update.callback_query
+    await q.answer()
+    data = q.data or ""
+    await _draft_type_chosen(update, context, data[8:])
+
+
 async def _draft_type_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE,
                               doc_type: str):
     """Step 2 of the draft flow: store the chosen type, then ask for facts."""
@@ -595,7 +604,9 @@ async def _run_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await post_to_channel(report)
     AP.incr_analyses(uid)
 
-    if not AP.has_access(uid, CFG.get("admin_ids")):
+    # Show the daily free-question counter for trial users (and anyone not on
+    # a paid plan) so they always know how many questions are left today.
+    if not AP.has_access(uid, CFG.get("admin_ids")) or not AP.is_paid(uid):
         remaining = AP.trial_remaining(uid)
         if remaining > 0:
             await update.message.reply_text(
@@ -865,7 +876,7 @@ def main():
     _app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^act:"))
     _app.add_handler(CallbackQueryHandler(sub_callback, pattern=r"^sub:"))
     _app.add_handler(CallbackQueryHandler(draft_callback, pattern=r"^draft:"))
-    _app.add_handler(CallbackQueryHandler(_draft_type_chosen, pattern=r"^doctype:"))
+    _app.add_handler(CallbackQueryHandler(_doctype_callback, pattern=r"^doctype:"))
 
     # Global error handler so the bot never silently hangs/crashes on an
     # unhandled exception (e.g. a slow OpenAI call) — the user always gets a
