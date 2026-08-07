@@ -995,22 +995,38 @@ def main():
 
     # Global error handler so the bot never silently hangs/crashes on an
     # unhandled exception (e.g. a slow OpenAI call) — the user always gets a
-    # message instead of being stuck on "در حال بررسی...".
+    # message instead of being stuck on "در حال بررسی...", and the admin is
+    # notified with the full traceback for self-diagnosis.
     async def _global_error(update: Update, context: ContextTypes.DEFAULT_TYPE):
         err = context.error
-        # Surface the real cause so the user (and admin) can diagnose instead of
-        # getting a generic "try again" that hides the root cause.
+        # Build a human-readable hint about the likely root cause.
         detail = ""
         if err is not None:
             msg = str(err)
             if "OPENAI_API_KEY" in msg:
-                detail = "\nعلت: کلید OpenAI روی سرور ست نشده (OPENAI_API_KEY در تنظیمات رندر خالی است)."
+                detail = "\nعلت: کلید OpenAI روی سرور ست نشده (OPENAI_API_KEY خالی است)."
             elif "insufficient_quota" in msg or "RateLimitError" in msg or "429" in msg:
                 detail = "\nعلت: حساب OpenAI شارژ نشده یا سقف استفاده تمام شده."
             elif "CHANNEL_ID" in msg:
                 detail = "\nعلت: شناسه کانال ست نشده."
+            elif "'NoneType' object has no attribute" in msg:
+                detail = "\nعلت: تلاش برای پاسخ به پیامی که وجود ندارد (update.message=None). " \
+                         "باید از update.effective_message استفاده شود."
             else:
-                detail = f"\nجزئیات: {msg[:200]}"
+                detail = f"\nجزئیات: {msg[:300]}"
+        # Always notify the admin (self-sufficiency: you get the report, not just a console log)
+        import traceback
+        tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))[-1500:] if err else "No error object"
+        for adm in CFG.get("admin_ids", []):
+            try:
+                await _app.bot.send_message(
+                    chat_id=adm,
+                    text=f"🚨 خطای ربات (گزارش خودکار):\n{detail}\n\n{tb}",
+                    parse_mode=None,
+                )
+            except Exception:
+                pass
+        # If we have a user-facing update, give them a clean message (not a stack trace)
         try:
             if update and update.effective_message:
                 await update.effective_message.reply_text(
@@ -1019,7 +1035,7 @@ def main():
                 )
         except Exception:
             pass
-        print(f"[global error] {err}")
+        print(f"[global error] {err}\n{tb}")
 
     _app.add_error_handler(_global_error)
 
